@@ -3,7 +3,12 @@ require "spec_helper"
 describe Mongoid::Relations do
 
   before(:all) do
-    Person.identity :type => BSON::ObjectId
+    Person.field(
+      :_id,
+      type: BSON::ObjectId,
+      pre_processed: true,
+      default: ->{ BSON::ObjectId.new }
+    )
   end
 
   describe "#embedded?" do
@@ -40,6 +45,26 @@ describe Mongoid::Relations do
 
         it "returns false" do
           person.should_not be_embedded
+        end
+      end
+    end
+
+    context "when the document is subclassed" do
+
+      context "when the document has no parent" do
+
+        it "returns false" do
+          Item.should_not be_embedded
+        end
+      end
+    end
+
+    context "when the document is a subclass" do
+
+      context "when the document has a parent" do
+
+        it "returns true" do
+          SubItem.should be_embedded
         end
       end
     end

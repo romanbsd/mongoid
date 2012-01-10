@@ -17,7 +17,7 @@ describe Mongoid::Relations::Referenced::One do
     end
 
     it "returns the embedded in builder" do
-      described_class.builder(metadata, document).should
+      described_class.builder(nil, metadata, document).should
         be_a_kind_of(builder_klass)
     end
   end
@@ -38,8 +38,33 @@ describe Mongoid::Relations::Referenced::One do
 
   describe ".macro" do
 
-    it "returns references_one" do
-      described_class.macro.should == :references_one
+    it "returns has_one" do
+      described_class.macro.should == :has_one
+    end
+  end
+
+  describe "#respond_to?" do
+
+    let(:person) do
+      Person.new
+    end
+
+    let!(:game) do
+      person.build_game(:name => "Tron")
+    end
+
+    let(:document) do
+      person.game
+    end
+
+    Mongoid::Document.public_instance_methods(true).each do |method|
+
+      context "when checking #{method}" do
+
+        it "returns true" do
+          document.respond_to?(method).should be_true
+        end
+      end
     end
   end
 
@@ -55,6 +80,13 @@ describe Mongoid::Relations::Referenced::One do
     it "returns the valid options" do
       described_class.valid_options.should ==
         [ :as, :autosave, :dependent, :foreign_key ]
+    end
+  end
+
+  describe ".validation_default" do
+
+    it "returns true" do
+      described_class.validation_default.should eq(true)
     end
   end
 end

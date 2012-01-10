@@ -9,7 +9,6 @@ module Mongoid # :nodoc:
 
       included do
         class_attribute :polymorphic
-        delegate :polymorphic?, :to => "self.class"
       end
 
       module ClassMethods #:nodoc:
@@ -34,19 +33,6 @@ module Mongoid # :nodoc:
               end
             end
           end
-        end
-
-        # Determines if the class is in a polymorphic relations, and thus must
-        # store the _type field in the database.
-        #
-        # @example Check if the class is polymorphic.
-        #   Movie.polymorphic?
-        #
-        # @return [ true, false ] True if polymorphic, false if not.
-        #
-        # @since 2.0.0.rc.1
-        def polymorphic?
-          !!polymorphic
         end
       end
     end

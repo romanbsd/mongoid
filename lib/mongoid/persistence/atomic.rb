@@ -9,7 +9,7 @@ require "mongoid/persistence/atomic/pull_all"
 require "mongoid/persistence/atomic/push"
 require "mongoid/persistence/atomic/push_all"
 require "mongoid/persistence/atomic/rename"
-require "mongoid/persistence/atomic/set"
+require "mongoid/persistence/atomic/sets"
 require "mongoid/persistence/atomic/unset"
 
 module Mongoid #:nodoc:
@@ -27,8 +27,11 @@ module Mongoid #:nodoc:
       # @example Add only a unique value on the field.
       #   person.add_to_set(:aliases, "Bond")
       #
+      # @example Add only the unique values to the field.
+      #   person.add_to_set(:aliases, [ "Bond", "James" ])
+      #
       # @param [ Symbol ] field The name of the field.
-      # @param [ Object ] value The value to add.
+      # @param [ Object, Array<Object> ] value The value or values to add.
       # @param [ Hash ] options The mongo persistence options.
       #
       # @return [ Array<Object> ] The new value of the field.
@@ -201,7 +204,7 @@ module Mongoid #:nodoc:
       #
       # @since 2.1.0
       def set(field, value = nil, options = {})
-        Set.new(self, field, value, options).persist
+        Sets.new(self, field, value, options).persist
       end
 
       # Performs the atomic $unset on the supplied field.

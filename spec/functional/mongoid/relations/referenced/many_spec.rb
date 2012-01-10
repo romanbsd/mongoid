@@ -7,10 +7,11 @@ describe Mongoid::Relations::Referenced::Many do
   end
 
   before do
-    [ Person, Post, Movie, Rating ].map(&:delete_all)
+    [ Person, Post, OrderedPost, Movie, Rating,
+      Game, Drug, Church, Acolyte ].map(&:delete_all)
   end
 
-  [ :<<, :push, :concat ].each do |method|
+  [ :<<, :push ].each do |method|
 
     describe "##{method}" do
 
@@ -43,11 +44,44 @@ describe Mongoid::Relations::Referenced::Many do
           end
 
           it "does not save the target" do
-            post.should be_new
+            post.should be_new_record
           end
 
           it "adds the document to the target" do
             person.posts.size.should eq(1)
+          end
+        end
+
+        context "when appending in a parent create block" do
+
+          let!(:post) do
+            Post.create(:title => "testing")
+          end
+
+          let!(:person) do
+            Person.create(:ssn => "345-11-1124") do |doc|
+              doc.posts << post
+            end
+          end
+
+          it "adds the documents to the relation" do
+            person.posts.should eq([ post ])
+          end
+
+          it "sets the foreign key on the inverse relation" do
+            post.person_id.should eq(person.id)
+          end
+
+          it "saves the target" do
+            post.should be_persisted
+          end
+
+          it "adds the correct number of documents" do
+            person.posts.size.should eq(1)
+          end
+
+          it "persists the link" do
+            person.reload.posts.should eq([ post ])
           end
         end
 
@@ -115,8 +149,12 @@ describe Mongoid::Relations::Referenced::Many do
               person.posts.count.should eq(2)
             end
 
-            it "contains all documents in the target" do
-              person.posts.should eq([ post, post_two ])
+            it "contains the initial document in the target" do
+              person.posts.should include(post)
+            end
+
+            it "contains the added document in the target" do
+              person.posts.should include(post_two)
             end
           end
         end
@@ -147,7 +185,7 @@ describe Mongoid::Relations::Referenced::Many do
           end
 
           it "does not save the target" do
-            rating.should be_new
+            rating.should be_new_record
           end
 
           it "adds the document to the target" do
@@ -189,12 +227,22 @@ describe Mongoid::Relations::Referenced::Many do
         context "when parent has String identity" do
 
           before do
-            Movie.identity :type => String
+            Movie.field(
+              :_id,
+              type: String,
+              pre_processed: true,
+              default: ->{ BSON::ObjectId.new.to_s }
+            )
             movie.ratings << Rating.new
           end
 
           after do
-            Movie.identity :type => BSON::ObjectId
+            Movie.field(
+              :_id,
+              type: BSON::ObjectId,
+              pre_processed: true,
+              default: ->{ BSON::ObjectId.new }
+            )
           end
 
           let(:movie) do
@@ -272,6 +320,125 @@ describe Mongoid::Relations::Referenced::Many do
 
         it "saves the target" do
           post.should be_persisted
+        end
+
+        context "when replacing the relation with the same documents" do
+
+          context "when using the same in memory instance" do
+
+            before do
+              person.posts = [ post ]
+            end
+
+            it "keeps the relation intact" do
+              person.posts.should eq([ post ])
+            end
+
+            it "does not delete the relation" do
+              person.reload.posts.should eq([ post ])
+            end
+          end
+
+          context "when using a new instance" do
+
+            let(:from_db) do
+              Person.find(person.id)
+            end
+
+            before do
+              from_db.posts = [ post ]
+            end
+
+            it "keeps the relation intact" do
+              from_db.posts.should eq([ post ])
+            end
+
+            it "does not delete the relation" do
+              from_db.reload.posts.should eq([ post ])
+            end
+          end
+        end
+
+        context "when replacing the with a combination of old and new docs" do
+
+          let(:new_post) do
+            Post.create(:title => "new post")
+          end
+
+          context "when using the same in memory instance" do
+
+            before do
+              person.posts = [ post, new_post ]
+            end
+
+            it "keeps the relation intact" do
+              person.posts.should eq([ post, new_post ])
+            end
+
+            it "does not delete the relation" do
+              person.reload.posts.should eq([ post, new_post ])
+            end
+          end
+
+          context "when using a new instance" do
+
+            let(:from_db) do
+              Person.find(person.id)
+            end
+
+            before do
+              from_db.posts = [ post, new_post ]
+            end
+
+            it "keeps the relation intact" do
+              from_db.posts.should eq([ post, new_post ])
+            end
+
+            it "does not delete the relation" do
+              from_db.reload.posts.should eq([ post, new_post ])
+            end
+          end
+        end
+
+        context "when replacing the with a combination of only new docs" do
+
+          let(:new_post) do
+            Post.create(:title => "new post")
+          end
+
+          context "when using the same in memory instance" do
+
+            before do
+              person.posts = [ new_post ]
+            end
+
+            it "keeps the relation intact" do
+              person.posts.should eq([ new_post ])
+            end
+
+            it "does not delete the relation" do
+              person.reload.posts.should eq([ new_post ])
+            end
+          end
+
+          context "when using a new instance" do
+
+            let(:from_db) do
+              Person.find(person.id)
+            end
+
+            before do
+              from_db.posts = [ new_post ]
+            end
+
+            it "keeps the relation intact" do
+              from_db.posts.should eq([ new_post ])
+            end
+
+            it "does not delete the relation" do
+              from_db.reload.posts.should eq([ new_post ])
+            end
+          end
         end
       end
     end
@@ -380,29 +547,60 @@ describe Mongoid::Relations::Referenced::Many do
           Person.create(:ssn => "437-11-1112")
         end
 
-        let(:post) do
-          Post.new
+        context "when dependent is destructive" do
+
+          let(:post) do
+            Post.new
+          end
+
+          before do
+            person.posts = [ post ]
+            person.posts = nil
+          end
+
+          it "sets the relation to empty" do
+            person.posts.should be_empty
+          end
+
+          it "removed the inverse relation" do
+            post.person.should be_nil
+          end
+
+          it "removes the foreign key value" do
+            post.person_id.should be_nil
+          end
+
+          it "deletes the target from the database" do
+            post.should be_destroyed
+          end
         end
 
-        before do
-          person.posts = [ post ]
-          person.posts = nil
-        end
+        context "when dependent is not destructive" do
 
-        it "sets the relation to empty" do
-          person.posts.should be_empty
-        end
+          let(:drug) do
+            Drug.new(:name => "Oxycodone")
+          end
 
-        it "removed the inverse relation" do
-          post.person.should be_nil
-        end
+          before do
+            person.drugs = [ drug ]
+            person.drugs = nil
+          end
 
-        it "removes the foreign key value" do
-          post.person_id.should be_nil
-        end
+          it "sets the relation to empty" do
+            person.drugs.should be_empty
+          end
 
-        it "deletes the target from the database" do
-          post.should be_destroyed
+          it "removed the inverse relation" do
+            drug.person.should be_nil
+          end
+
+          it "removes the foreign key value" do
+            drug.person_id.should be_nil
+          end
+
+          it "nullifies the relation" do
+            drug.should_not be_destroyed
+          end
         end
       end
     end
@@ -464,8 +662,11 @@ describe Mongoid::Relations::Referenced::Many do
           rating.ratable_id.should be_nil
         end
 
-        it "deletes the target from the database" do
-          rating.should be_destroyed
+        context "when dependent is nullify" do
+
+          it "does not delete the target from the database" do
+            rating.should_not be_destroyed
+          end
         end
       end
     end
@@ -502,6 +703,28 @@ describe Mongoid::Relations::Referenced::Many do
 
     describe "##{method}" do
 
+      context "when providing scoped mass assignment" do
+
+        let(:person) do
+          Person.new
+        end
+
+        let(:drug) do
+          person.drugs.send(
+            method,
+            { :name => "Oxycontin", :generic => false }, :as => :admin
+          )
+        end
+
+        it "sets the attributes for the provided role" do
+          drug.name.should eq("Oxycontin")
+        end
+
+        it "does not set the attributes for other roles" do
+          drug.generic.should be_nil
+        end
+      end
+
       context "when the relation is not polymorphic" do
 
         context "when the parent is a new record" do
@@ -527,7 +750,7 @@ describe Mongoid::Relations::Referenced::Many do
           end
 
           it "does not save the target" do
-            post.should be_new
+            post.should be_new_record
           end
 
           it "adds the document to the target" do
@@ -562,7 +785,7 @@ describe Mongoid::Relations::Referenced::Many do
           end
 
           it "does not save the target" do
-            post.should be_new
+            post.should be_new_record
           end
 
           it "adds the document to the target" do
@@ -596,7 +819,7 @@ describe Mongoid::Relations::Referenced::Many do
           end
 
           it "does not save the target" do
-            rating.should be_new
+            rating.should be_new_record
           end
 
           it "adds the document to the target" do
@@ -631,7 +854,7 @@ describe Mongoid::Relations::Referenced::Many do
           end
 
           it "does not save the target" do
-            rating.should be_new
+            rating.should be_new_record
           end
 
           it "adds the document to the target" do
@@ -737,8 +960,8 @@ describe Mongoid::Relations::Referenced::Many do
             movie.ratings.should be_empty
           end
 
-          it "marks the documents as deleted" do
-            rating.should be_destroyed
+          it "handles the proper dependent strategy" do
+            rating.should_not be_destroyed
           end
 
           it "deletes the documents from the db" do
@@ -783,6 +1006,249 @@ describe Mongoid::Relations::Referenced::Many do
         it "clears out the relation" do
           movie.ratings.should be_empty
         end
+      end
+    end
+  end
+
+  describe "#concat" do
+
+    context "when the relations are not polymorphic" do
+
+      context "when the parent is a new record" do
+
+        let(:person) do
+          Person.new
+        end
+
+        let(:post) do
+          Post.new
+        end
+
+        before do
+          person.posts.concat([ post ])
+        end
+
+        it "sets the foreign key on the relation" do
+          post.person_id.should eq(person.id)
+        end
+
+        it "sets the base on the inverse relation" do
+          post.person.should eq(person)
+        end
+
+        it "sets the same instance on the inverse relation" do
+          post.person.should eql(person)
+        end
+
+        it "does not save the target" do
+          post.should be_new_record
+        end
+
+        it "adds the document to the target" do
+          person.posts.size.should eq(1)
+        end
+      end
+
+      context "when appending in a parent create block" do
+
+        let!(:post) do
+          Post.create(:title => "testing")
+        end
+
+        let!(:person) do
+          Person.create(:ssn => "345-11-1124") do |doc|
+            doc.posts.concat([ post ])
+          end
+        end
+
+        it "adds the documents to the relation" do
+          person.posts.should eq([ post ])
+        end
+
+        it "sets the foreign key on the inverse relation" do
+          post.person_id.should eq(person.id)
+        end
+
+        it "saves the target" do
+          post.should be_persisted
+        end
+
+        it "adds the correct number of documents" do
+          person.posts.size.should eq(1)
+        end
+
+        it "persists the link" do
+          person.reload.posts.should eq([ post ])
+        end
+      end
+
+      context "when the parent is not a new record" do
+
+        let(:person) do
+          Person.create(:ssn => "554-44-3891")
+        end
+
+        let(:post) do
+          Post.new
+        end
+
+        before do
+          person.posts.concat([ post ])
+        end
+
+        it "sets the foreign key on the relation" do
+          post.person_id.should eq(person.id)
+        end
+
+        it "sets the base on the inverse relation" do
+          post.person.should eq(person)
+        end
+
+        it "sets the same instance on the inverse relation" do
+          post.person.should eql(person)
+        end
+
+        it "saves the target" do
+          post.should be_persisted
+        end
+
+        it "adds the document to the target" do
+          person.posts.count.should eq(1)
+        end
+
+        context "when documents already exist on the relation" do
+
+          let(:post_two) do
+            Post.new(:title => "Test")
+          end
+
+          before do
+            person.posts.concat([ post_two ])
+          end
+
+          it "sets the foreign key on the relation" do
+            post_two.person_id.should eq(person.id)
+          end
+
+          it "sets the base on the inverse relation" do
+            post_two.person.should eq(person)
+          end
+
+          it "sets the same instance on the inverse relation" do
+            post_two.person.should eql(person)
+          end
+
+          it "saves the target" do
+            post_two.should be_persisted
+          end
+
+          it "adds the document to the target" do
+            person.posts.count.should eq(2)
+          end
+
+          it "contains the initial document in the target" do
+            person.posts.should include(post)
+          end
+
+          it "contains the added document in the target" do
+            person.posts.should include(post_two)
+          end
+        end
+      end
+    end
+  end
+
+  context "when the relations are polymorphic" do
+
+    context "when the parent is a new record" do
+
+      let(:movie) do
+        Movie.new
+      end
+
+      let(:rating) do
+        Rating.new
+      end
+
+      before do
+        movie.ratings.concat([ rating ])
+      end
+
+      it "sets the foreign key on the relation" do
+        rating.ratable_id.should eq(movie.id)
+      end
+
+      it "sets the base on the inverse relation" do
+        rating.ratable.should eq(movie)
+      end
+
+      it "does not save the target" do
+        rating.should be_new_record
+      end
+
+      it "adds the document to the target" do
+        movie.ratings.size.should eq(1)
+      end
+    end
+
+    context "when the parent is not a new record" do
+
+      let(:movie) do
+        Movie.create
+      end
+
+      let(:rating) do
+        Rating.new
+      end
+
+      before do
+        movie.ratings.concat([ rating ])
+      end
+
+      it "sets the foreign key on the relation" do
+        rating.ratable_id.should eq(movie.id)
+      end
+
+      it "sets the base on the inverse relation" do
+        rating.ratable.should eq(movie)
+      end
+
+      it "saves the target" do
+        rating.should be_persisted
+      end
+
+      it "adds the document to the target" do
+        movie.ratings.count.should eq(1)
+      end
+    end
+
+    context "when parent has String identity" do
+
+      before do
+        Movie.field(
+          :_id,
+          pre_processeded: true,
+          type: String,
+          default: ->{ BSON::ObjectId.new.to_s }
+        )
+        movie.ratings << Rating.new
+      end
+
+      after do
+        Movie.field(
+          :_id,
+          pre_processeded: true,
+          type: BSON::ObjectId,
+          default: ->{ BSON::ObjectId.new }
+        )
+      end
+
+      let(:movie) do
+        Movie.create
+      end
+
+      it "should have rating references" do
+        movie.ratings.count.should eq(1)
       end
     end
   end
@@ -842,6 +1308,27 @@ describe Mongoid::Relations::Referenced::Many do
   end
 
   describe "#create" do
+
+    context "when providing scoped mass assignment" do
+
+      let(:person) do
+        Person.create(:ssn => "213-12-2121")
+      end
+
+      let(:drug) do
+        person.drugs.create(
+          { :name => "Oxycontin", :generic => false }, :as => :admin
+        )
+      end
+
+      it "sets the attributes for the provided role" do
+        drug.name.should eq("Oxycontin")
+      end
+
+      it "does not set the attributes for other roles" do
+        drug.generic.should be_nil
+      end
+    end
 
     context "when the relation is not polymorphic" do
 
@@ -938,7 +1425,7 @@ describe Mongoid::Relations::Referenced::Many do
         end
 
         it "saves the target" do
-          rating.should_not be_new
+          rating.should_not be_new_record
         end
 
         it "adds the document to the target" do
@@ -949,6 +1436,27 @@ describe Mongoid::Relations::Referenced::Many do
   end
 
   describe "#create!" do
+
+    context "when providing mass scoping options" do
+
+      let(:person) do
+        Person.create(:ssn => "213-12-2121")
+      end
+
+      let(:drug) do
+        person.drugs.create!(
+          { :name => "Oxycontin", :generic => false }, :as => :admin
+        )
+      end
+
+      it "sets the attributes for the provided role" do
+        drug.name.should eq("Oxycontin")
+      end
+
+      it "does not set the attributes for other roles" do
+        drug.generic.should be_nil
+      end
+    end
 
     context "when the relation is not polymorphic" do
 
@@ -1048,7 +1556,7 @@ describe Mongoid::Relations::Referenced::Many do
         end
 
         it "saves the target" do
-          rating.should_not be_new
+          rating.should_not be_new_record
         end
 
         it "adds the document to the target" do
@@ -1310,6 +1818,87 @@ describe Mongoid::Relations::Referenced::Many do
     end
   end
 
+  describe ".eager_load" do
+
+    before do
+      Mongoid.identity_map_enabled = true
+    end
+
+    after do
+      Mongoid.identity_map_enabled = false
+    end
+
+    context "when the relation is not polymorphic" do
+
+      let!(:person) do
+        Person.create(:ssn => "243-12-5243")
+      end
+
+      let!(:post) do
+        person.posts.create(:title => "testing")
+      end
+
+      let(:metadata) do
+        Person.relations["posts"]
+      end
+
+      let!(:eager) do
+        described_class.eager_load(metadata, Person.all.map(&:_id))
+      end
+
+      let(:map) do
+        Mongoid::IdentityMap.get(Post, "person_id" => person.id)
+      end
+
+      it "returns the appropriate criteria" do
+        eager.selector.should eq({ "person_id" => { "$in" => [ person.id ] }})
+      end
+
+      it "puts the documents in the identity map" do
+        map.should eq([ post ])
+      end
+    end
+
+    context "when the relation is polymorphic" do
+
+      let!(:movie) do
+        Movie.create(:name => "Bladerunner")
+      end
+
+      let!(:book) do
+        Book.create(:name => "Game of Thrones")
+      end
+
+      let!(:movie_rating) do
+        movie.ratings.create(:value => 10)
+      end
+
+      let!(:book_rating) do
+        book.create_rating(:value => 10)
+      end
+
+      let(:metadata) do
+        Movie.relations["ratings"]
+      end
+
+      let!(:eager) do
+        described_class.eager_load(metadata, Movie.all.map(&:_id))
+      end
+
+      let(:map) do
+        Mongoid::IdentityMap.get(Rating, "ratable_id" => movie.id)
+      end
+
+      it "returns the appropriate criteria" do
+        eager.selector.should eq({ "ratable_id" => { "$in" => [ movie.id ] }})
+      end
+
+      it "puts the documents in the identity map" do
+        map.should eq([ movie_rating ])
+      end
+    end
+  end
+
   describe "#exists?" do
 
     let!(:person) do
@@ -1340,6 +1929,41 @@ describe Mongoid::Relations::Referenced::Many do
   end
 
   describe "#find" do
+
+    context "when the identity map is enabled" do
+
+      before do
+        Mongoid.identity_map_enabled = true
+      end
+
+      after do
+        Mongoid.identity_map_enabled = false
+      end
+
+      context "when the document is in the map" do
+
+        let(:person) do
+          Person.create(:ssn => "123-11-1111")
+        end
+
+        before do
+          person.posts.create(:title => "Test")
+        end
+
+        context "when the document does not belong to the relation" do
+
+          let!(:post) do
+            Post.create(:title => "testing")
+          end
+
+          it "raises an error" do
+            expect {
+              person.posts.find(post.id)
+            }.to raise_error(Mongoid::Errors::DocumentNotFound)
+          end
+        end
+      end
+    end
 
     context "when the relation is not polymorphic" do
 
@@ -1465,81 +2089,6 @@ describe Mongoid::Relations::Referenced::Many do
           end
         end
       end
-
-      context "when finding first" do
-
-        context "when there is a match" do
-
-          let(:post) do
-            person.posts.find(:first, :conditions => { :title => "Test" })
-          end
-
-          it "returns the first matching document" do
-            post.should == post_one
-          end
-        end
-
-        context "when there is no match" do
-
-          let(:post) do
-            person.posts.find(:first, :conditions => { :title => "Testing" })
-          end
-
-          it "returns nil" do
-            post.should be_nil
-          end
-        end
-      end
-
-      context "when finding last" do
-
-        context "when there is a match" do
-
-          let(:post) do
-            person.posts.find(:last, :conditions => { :title => "OMG I has relations" })
-          end
-
-          it "returns the last matching document" do
-            post.should == post_two
-          end
-        end
-
-        context "when there is no match" do
-
-          let(:post) do
-            person.posts.find(:last, :conditions => { :title => "Testing" })
-          end
-
-          it "returns nil" do
-            post.should be_nil
-          end
-        end
-      end
-
-      context "when finding all" do
-
-        context "when there is a match" do
-
-          let(:posts) do
-            person.posts.find(:all, :conditions => { :title => { "$exists" => true } })
-          end
-
-          it "returns the matching documents" do
-            posts.should == [ post_one, post_two ]
-          end
-        end
-
-        context "when there is no match" do
-
-          let(:posts) do
-            person.posts.find(:all, :conditions => { :title => "Other" })
-          end
-
-          it "returns an empty array" do
-            posts.should be_empty
-          end
-        end
-      end
     end
 
     context "when the relation is polymorphic" do
@@ -1650,81 +2199,6 @@ describe Mongoid::Relations::Referenced::Many do
             it "returns an empty array" do
               ratings.should be_empty
             end
-          end
-        end
-      end
-
-      context "when finding first" do
-
-        context "when there is a match" do
-
-          let(:rating) do
-            movie.ratings.find(:first, :conditions => { :value => 1 })
-          end
-
-          it "returns the first matching document" do
-            rating.should == rating_one
-          end
-        end
-
-        context "when there is no match" do
-
-          let(:rating) do
-            movie.ratings.find(:first, :conditions => { :value => 11 })
-          end
-
-          it "returns nil" do
-            rating.should be_nil
-          end
-        end
-      end
-
-      context "when finding last" do
-
-        context "when there is a match" do
-
-          let(:rating) do
-            movie.ratings.find(:last, :conditions => { :value => 5 })
-          end
-
-          it "returns the last matching document" do
-            rating.should == rating_two
-          end
-        end
-
-        context "when there is no match" do
-
-          let(:rating) do
-            movie.ratings.find(:last, :conditions => { :value => 3 })
-          end
-
-          it "returns nil" do
-            rating.should be_nil
-          end
-        end
-      end
-
-      context "when finding all" do
-
-        context "when there is a match" do
-
-          let(:ratings) do
-            movie.ratings.find(:all, :conditions => { :value => { "$exists" => true } })
-          end
-
-          it "returns the matching documents" do
-            ratings.should == [ rating_one, rating_two ]
-          end
-        end
-
-        context "when there is no match" do
-
-          let(:ratings) do
-            movie.ratings.find(:all, :conditions => { :value => 7 })
-          end
-
-          it "returns an empty array" do
-            ratings.should be_empty
           end
         end
       end
@@ -2192,7 +2666,7 @@ describe Mongoid::Relations::Referenced::Many do
         end
 
         it "returns 1" do
-          movie.ratings.send(method).should == 1
+          movie.ratings.send(method).should eq(1)
         end
       end
 
@@ -2204,41 +2678,164 @@ describe Mongoid::Relations::Referenced::Many do
         end
 
         it "returns the total number of documents" do
-          movie.ratings.send(method).should == 2
+          movie.ratings.send(method).should eq(2)
         end
       end
     end
   end
 
-  context "then association has order" do
+  describe "#unscoped" do
+
+    context "when the relation has no default scope" do
+
+      let!(:person) do
+        Person.create(:ssn => "123-11-1111")
+      end
+
+      let!(:post_one) do
+        person.posts.create(:title => "first")
+      end
+
+      let!(:post_two) do
+        Post.create(:title => "second")
+      end
+
+      let(:unscoped) do
+        person.posts.unscoped
+      end
+
+      it "returns only the associated documents" do
+        unscoped.should eq([ post_one ])
+      end
+    end
+
+    context "when the relation has a default scope" do
+
+      let!(:church) do
+        Church.create
+      end
+
+      let!(:acolyte_one) do
+        church.acolytes.create(:name => "first")
+      end
+
+      let!(:acolyte_two) do
+        Acolyte.create(:name => "second")
+      end
+
+      let(:unscoped) do
+        church.acolytes.unscoped
+      end
+
+      it "only returns associated documents" do
+        unscoped.should eq([ acolyte_one ])
+      end
+
+      it "removes the default scoping options" do
+        unscoped.options.should eq({})
+      end
+    end
+  end
+
+  context "when the association has an order defined" do
+
     let(:person) do
       Person.create(:ssn => "999-99-9999")
     end
 
     let(:post_one) do
-      Post.create(:rating => 10, :title => '1')
+      OrderedPost.create(:rating => 10, :title => '1')
     end
 
     let(:post_two) do
-      Post.create(:rating => 20, :title => '2')
+      OrderedPost.create(:rating => 20, :title => '2')
     end
 
     let(:post_three) do
-      Post.create(:rating => 20, :title => '3')
+      OrderedPost.create(:rating => 20, :title => '3')
     end
 
-
     before do
-      person.posts.nullify_all
-      person.posts.push(post_one, post_two, post_three)
+      person.ordered_posts.nullify_all
+      person.ordered_posts.push(post_one, post_two, post_three)
     end
 
     it "order documents" do
-      person.posts(true).should == [post_two, post_three, post_one]
+      person.ordered_posts(true).should eq(
+        [post_two, post_three, post_one]
+      )
     end
 
     it "chaining order criterias" do
-      person.posts.order_by(:title.desc).to_a.should == [post_three, post_two, post_one]
+      person.ordered_posts.order_by(:title.desc).to_a.should eq(
+        [post_three, post_two, post_one]
+      )
+    end
+  end
+
+  context "when reloading the relation" do
+
+    let!(:person) do
+      Person.create(:ssn => "243-41-9678")
+    end
+
+    let!(:post_one) do
+      Post.create(:title => "one")
+    end
+
+    let!(:post_two) do
+      Post.create(:title => "two")
+    end
+
+    before do
+      person.posts << post_one
+    end
+
+    context "when the relation references the same documents" do
+
+      before do
+        Post.collection.update(
+          { :_id => post_one.id }, { "$set" => { :title => "reloaded" }}
+        )
+      end
+
+      let(:reloaded) do
+        person.posts(true)
+      end
+
+      it "reloads the document from the database" do
+        reloaded.first.title.should eq("reloaded")
+      end
+    end
+
+    context "when the relation references different documents" do
+
+      before do
+        person.posts << post_two
+      end
+
+      let(:reloaded) do
+        person.posts(true)
+      end
+
+      it "reloads the first document from the database" do
+        reloaded.should include(post_one)
+      end
+
+      it "reloads the new document from the database" do
+        reloaded.should include(post_two)
+      end
+    end
+  end
+
+  context "when the parent is using integer ids" do
+
+    let(:jar) do
+      Jar.create(:_id => 1)
+    end
+
+    it "allows creation of the document" do
+      jar.id.should eq(1)
     end
   end
 end

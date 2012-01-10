@@ -8,6 +8,52 @@ describe Mongoid::Finders do
 
   describe "#find" do
 
+    context "when using integer ids" do
+
+      before(:all) do
+        Person.field(:_id, type: Integer)
+      end
+
+      after(:all) do
+        Person.field(
+          :_id,
+          type: BSON::ObjectId,
+          pre_processed: true,
+          default: ->{ BSON::ObjectId.new }
+        )
+      end
+
+      context "when passed a string" do
+
+        let!(:person) do
+          Person.create(:_id => 1, :ssn => "123-44-4321")
+        end
+
+        let(:from_db) do
+          Person.find("1")
+        end
+
+        it "returns the matching document" do
+          from_db.should eq(person)
+        end
+      end
+
+      context "when passed an array of strings" do
+
+        let!(:person) do
+          Person.create(:_id => 2, :ssn => "123-44-4321")
+        end
+
+        let(:from_db) do
+          Person.find([ "2" ])
+        end
+
+        it "returns the matching documents" do
+          from_db.should eq([ person ])
+        end
+      end
+    end
+
     context "when using string ids" do
 
       let!(:person) do
@@ -21,11 +67,21 @@ describe Mongoid::Finders do
       end
 
       before(:all) do
-        Person.identity :type => String
+        Person.field(
+          :_id,
+          type: String,
+          pre_processed: true,
+          default: ->{ BSON::ObjectId.new.to_s }
+        )
       end
 
       after(:all) do
-        Person.identity :type => BSON::ObjectId
+        Person.field(
+          :_id,
+          type: BSON::ObjectId,
+          pre_processed: true,
+          default: ->{ BSON::ObjectId.new }
+        )
       end
 
       context "with an id as an argument" do
@@ -43,6 +99,51 @@ describe Mongoid::Finders do
             expect {
               Person.find(BSON::ObjectId.new.to_s)
             }.to raise_error(Mongoid::Errors::DocumentNotFound)
+          end
+        end
+
+        context "when the identity map is enabled" do
+
+          before do
+            Mongoid.identity_map_enabled = true
+          end
+
+          after do
+            Mongoid.identity_map_enabled = false
+          end
+
+          context "when the document is found in the map" do
+
+            before do
+              Mongoid::IdentityMap.set(person)
+            end
+
+            let(:from_map) do
+              Person.find(person.id)
+            end
+
+            it "returns the document" do
+              from_map.should eq(person)
+            end
+
+            it "returns the same instance" do
+              from_map.should equal(person)
+            end
+          end
+
+          context "when the document is not found in the map" do
+
+            let(:from_db) do
+              Person.find(person.id)
+            end
+
+            it "returns the document from the database" do
+              from_db.should eq(person)
+            end
+
+            it "returns a different instance" do
+              from_db.should_not equal(person)
+            end
           end
         end
       end
@@ -97,7 +198,12 @@ describe Mongoid::Finders do
       end
 
       before(:all) do
-        Person.identity :type => BSON::ObjectId
+        Person.field(
+          :_id,
+          type: BSON::ObjectId,
+          pre_processed: true,
+          default: ->{ BSON::ObjectId.new }
+        )
       end
 
       context "when passed a BSON::ObjectId as an argument" do
@@ -240,7 +346,7 @@ describe Mongoid::Finders do
         end
 
         it "creates a new document" do
-          person.should be_new
+          person.should be_new_record
         end
 
         it "sets the attributes" do
@@ -257,7 +363,7 @@ describe Mongoid::Finders do
         end
 
         it "creates a new document" do
-          person.should be_new
+          person.should be_new_record
         end
 
         it "sets the attributes" do

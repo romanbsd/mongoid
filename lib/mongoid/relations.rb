@@ -3,6 +3,7 @@ require "mongoid/relations/accessors"
 require "mongoid/relations/auto_save"
 require "mongoid/relations/cascading"
 require "mongoid/relations/constraint"
+require "mongoid/relations/conversions"
 require "mongoid/relations/cyclic"
 require "mongoid/relations/proxy"
 require "mongoid/relations/bindings"
@@ -43,9 +44,7 @@ module Mongoid # :nodoc:
     include Reflections
     include Synchronization
 
-    included do
-      attr_accessor :metadata
-    end
+    attr_accessor :metadata
 
     # Determine if the document itself is embedded in another document via the
     # proper channels. (If it has a parent document.)
@@ -93,7 +92,7 @@ module Mongoid # :nodoc:
     #
     # @since 2.0.0.rc.1
     def referenced_many?
-      metadata && metadata.macro == :references_many
+      metadata && metadata.macro == :has_many
     end
 
     # Determine if the document is part of an references_one relation.
@@ -105,7 +104,39 @@ module Mongoid # :nodoc:
     #
     # @since 2.0.0.rc.1
     def referenced_one?
-      metadata && metadata.macro == :references_one
+      metadata && metadata.macro == :has_one
+    end
+
+    # Convenience method for iterating through the loaded relations and
+    # reloading them.
+    #
+    # @example Reload the relations.
+    #   document.reload_relations
+    #
+    # @return [ Hash ] The relations metadata.
+    #
+    # @since 2.1.6
+    def reload_relations
+      relations.each_pair do |name, meta|
+        if instance_variable_defined?("@#{name}")
+          remove_instance_variable("@#{name}")
+        end
+      end
+    end
+
+    module ClassMethods #:nodoc:
+
+      # This is convenience for librarys still on the old API.
+      #
+      # @example Get the associations.
+      #   Person.associations
+      #
+      # @return [ Hash ] The relations.
+      #
+      # @since 2.3.1
+      def associations
+        self.relations
+      end
     end
   end
 end

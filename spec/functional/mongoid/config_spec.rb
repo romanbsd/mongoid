@@ -35,31 +35,10 @@ describe Mongoid::Config do
     end
   end
 
-  describe ".add_language" do
-
-    context "when adding a language" do
-
-      before do
-        described_class.add_language("de")
-        I18n.reload!
-        I18n.locale = :de
-      end
-
-      after do
-        I18n.locale = :en
-      end
-
-      it "adds the language" do
-        I18n.translate("mongoid.errors.messages.taken").should ==
-          "ist bereits vergeben"
-      end
-    end
-  end
-
   describe ".destructive_fields" do
 
     it "returns a list of method names" do
-      described_class.destructive_fields.should include("process")
+      described_class.destructive_fields.should include(:process)
     end
   end
 
@@ -95,6 +74,10 @@ describe Mongoid::Config do
         described_class.parameterize_keys.should == false
       end
 
+      it "sets scope_overwrite_exception" do
+        described_class.scope_overwrite_exception.should == false
+      end
+
       it "sets persist_in_safe_mode" do
         described_class.persist_in_safe_mode.should == false
       end
@@ -105,6 +88,10 @@ describe Mongoid::Config do
 
       it "returns nil, which is interpreted as the local time_zone" do
         described_class.use_utc.should be_false
+      end
+
+      it "sets the logger to nil" do
+        described_class.logger.should be_nil
       end
     end
 
@@ -154,24 +141,13 @@ describe Mongoid::Config do
         described_class.master.name.should == "mongoid"
       end
     end
-
-    context "when configured with replset", :config => :replset_config do
-
-      let(:settings) do
-        YAML.load(ERB.new(File.new(replset_config).read).result)
-      end
-
-      it "should create a regular Mongo::ReplSetConnection" do
-        described_class.master.connection.should be_a Mongo::ReplSetConnection
-      end
-
-      it "should create regular Mongo::ReplSetConnection(s) for multiple databases" do
-        described_class.databases["shard_replset"].connection.should be_a Mongo::ReplSetConnection
-      end
-    end
   end
 
   describe ".load!" do
+
+    before(:all) do
+      Object.send(:remove_const, :Rails) if defined?(Rails)
+    end
 
     before do
       ENV["RACK_ENV"] = "test"
@@ -196,6 +172,10 @@ describe Mongoid::Config do
 
     it "sets parameterize keys" do
       described_class.parameterize_keys.should == false
+    end
+
+    it "sets scope_overwrite_exception" do
+      described_class.scope_overwrite_exception.should == false
     end
 
     it "sets persist_in_safe_mode" do
@@ -309,22 +289,17 @@ describe Mongoid::Config do
   describe ".purge!" do
 
     before do
-      Person.create(:ssn => "123-44-1200")
       Post.create(:title => "testing")
     end
 
     context "when no collection name is provided" do
 
-      let!(:collections) do
+      before do
         Mongoid.purge!
       end
 
-      it "purges the person collection" do
-        Person.count.should == 0
-      end
-
       it "purges the post collection" do
-        Post.count.should == 0
+        Mongoid.master.collection("posts").count.should eq(0)
       end
     end
   end
@@ -360,6 +335,13 @@ describe Mongoid::Config do
 
       it "defaults to true" do
         described_class.parameterize_keys.should be_true
+      end
+    end
+
+    describe ".scope_overwrite_exception" do
+
+      it "defaults to false" do
+        described_class.scope_overwrite_exception.should be_false
       end
     end
 

@@ -19,7 +19,7 @@ describe Mongoid::Document do
     end
 
     let(:attributes) do
-      collection.find({ :name => "Test"}, {}).next_document
+      collection.find({ :name => "Test"}, {}).first
     end
 
     it "persists the versions" do
@@ -46,7 +46,7 @@ describe Mongoid::Document do
     end
 
     let(:attributes) do
-      collection.find({ :name => "Testy"}, {}).next_document
+      collection.find({ :name => "Testy"}, {}).first
     end
 
     before do
@@ -140,7 +140,7 @@ describe Mongoid::Document do
     after do
       Firefox.delete_all
     end
-    
+
     it 'should find object with String args' do
       Firefox.find(@firefox.id.to_s).should == @firefox
     end
@@ -216,33 +216,32 @@ describe Mongoid::Document do
     end
 
     it "should allow STI from the build call" do
-      car = @container.vehicles.build({},Car)
+      car = @container.vehicles.build({}, Car)
       car.save
 
-      truck = @container.vehicles.build({},Truck)
+      truck = @container.vehicles.build({}, Truck)
       truck.save
 
       @container.vehicles.map(&:class).should == [Car,Truck]
     end
 
-    it "should respect the _type attribute" do
+    it "should respect the _type attribute from the build call" do
       @container.vehicles.build({ "_type" => "Car" })
       @container.vehicles.build({ "_type" => "Truck" })
       @container.vehicles.map(&:class).should == [Car,Truck]
     end
 
-    it "should allow STI from the build call" do
-      @container.vehicles.create({},Car)
-      @container.vehicles.create({},Truck)
+    it "should allow STI from the create call" do
+      @container.vehicles.create({}, Car)
+      @container.vehicles.create({}, Truck)
       @container.vehicles.map(&:class).should == [Car,Truck]
     end
 
-    it "should respect the _type attribute" do
+    it "should respect the _type attribute from the create call" do
       @container.vehicles.create({ "_type" => "Car" })
       @container.vehicles.create({ "_type" => "Truck" })
       @container.vehicles.map(&:class).should == [Car,Truck]
     end
-
 
     it "should not bleed relations from one subclass to another" do
       Truck.relations.keys.should =~ %w/ shipping_container driver bed /

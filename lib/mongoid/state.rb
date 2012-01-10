@@ -5,6 +5,8 @@ module Mongoid #:nodoc:
   # document can transition through.
   module State
 
+    attr_writer :destroyed, :flagged_for_destroy, :new_record
+
     # Returns true if the +Document+ has not been persisted to the database,
     # false if it has. This is determined by the variable @new_record
     # and NOT if the object has an id.
@@ -16,19 +18,6 @@ module Mongoid #:nodoc:
     def new_record?
       @new_record == true
     end
-    alias :new? :new_record?
-
-    # Sets the new_record boolean - used after document is saved.
-    #
-    # @example Set whether the document is new.
-    #   person.new_record = true
-    #
-    # @param [ true, false ] saved The value to set for new_record.
-    #
-    # @return [ true, false ] The new_record value.
-    def new_record=(saved)
-      @new_record = saved
-    end
 
     # Checks if the document has been saved to the database. Returns false
     # if the document has been destroyed.
@@ -39,6 +28,19 @@ module Mongoid #:nodoc:
     # @return [ true, false ] True if persisted, false if not.
     def persisted?
       !new_record? && !destroyed?
+    end
+
+    # Returns whether or not the document has been flagged for deletion, but
+    # not destroyed yet. Used for atomic pulls of child documents.
+    #
+    # @example Is the document flagged?
+    #   document.flagged_for_destroy?
+    #
+    # @return [ true, false ] If the document is flagged.
+    #
+    # @since 2.3.2
+    def flagged_for_destroy?
+      !!@flagged_for_destroy
     end
 
     # Returns true if the +Document+ has been succesfully destroyed, and false
@@ -54,16 +56,6 @@ module Mongoid #:nodoc:
     end
     alias :deleted? :destroyed?
 
-    # Sets the destroyed boolean - used after document is destroyed.
-    #
-    # @example Set the destroyed flag.
-    #   person.destroyed = true
-    #
-    # @return [ true, false ] The value set for destroyed.
-    def destroyed=(destroyed)
-      @destroyed = destroyed && true
-    end
-
     # Determine if the document can be pushed.
     #
     # @example Is this pushable?
@@ -71,7 +63,10 @@ module Mongoid #:nodoc:
     #
     # @return [ true, false ] Is the document new and embedded?
     def pushable?
-      new? && embedded_many? && _parent.persisted?
+      new_record? &&
+        embedded_many? &&
+        _parent.persisted? &&
+        !_parent.delayed_atomic_sets[metadata.name.to_s]
     end
 
     # Determine if the document can be set.
@@ -83,7 +78,7 @@ module Mongoid #:nodoc:
     #
     # @since 2.1.0
     def settable?
-      new? && embedded_one?
+      new_record? && embedded_one? && _parent.persisted?
     end
 
     # Is the document updateable?

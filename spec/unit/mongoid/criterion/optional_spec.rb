@@ -8,6 +8,44 @@ describe Mongoid::Criterion::Optional do
 
   describe "#ascending" do
 
+    context "when a field is localized" do
+
+      let(:base) do
+        Mongoid::Criteria.new(Product)
+      end
+
+      context "when no locale is defined" do
+
+        let(:criteria) do
+          base.ascending(:description)
+        end
+
+        it "converts to dot notation with the default locale" do
+          criteria.options[:sort].should == [[:"description.en", :asc]]
+        end
+
+      end
+
+      context "when a locale is defined" do
+
+        before do
+          ::I18n.locale = :de
+        end
+
+        after do
+          ::I18n.locale = :en
+        end
+
+        let(:criteria) do
+          base.ascending(:description)
+        end
+
+        it "converts to dot notation with the default locale" do
+          criteria.options[:sort].should == [[:"description.de", :asc]]
+        end
+      end
+    end
+
     context "when providing a field" do
 
       let(:criteria) do
@@ -116,18 +154,67 @@ describe Mongoid::Criterion::Optional do
   end
 
   context "when chaining sort criteria" do
+    let(:original) do
+      base.desc(:title)
+    end
 
     let(:criteria) do
-      base.asc(:title).desc(:dob, :name).order_by(:score.asc)
+      original.asc(:title).desc(:dob, :name).order_by(:score.asc)
     end
 
     it "does not overwrite any previous criteria" do
       criteria.options[:sort].should ==
         [[ :title, :asc ], [ :dob, :desc ], [ :name, :desc ], [ :score, :asc ]]
     end
+
+    it 'does not alter the original criteria' do
+      expect {
+        criteria
+      }.not_to change { original.options[:sort] }
+    end
   end
 
   describe "#descending" do
+
+    context "when a field is localized" do
+
+      let(:base) do
+        Mongoid::Criteria.new(Product)
+      end
+
+      context "when no locale is defined" do
+
+        let(:criteria) do
+          base.descending(:description)
+        end
+
+        it "converts to dot notation with the default locale" do
+          criteria.options[:sort].should == [[:"description.en", :desc]]
+        end
+
+      end
+
+      context "when a locale is defined" do
+
+        before do
+          ::I18n.locale = :de
+        end
+
+        after do
+          ::I18n.locale = :en
+        end
+
+        let(:criteria) do
+          base.descending(:description)
+        end
+
+        it "converts to dot notation with the default locale" do
+          criteria.options[:sort].should == [[:"description.de", :desc]]
+        end
+
+      end
+
+    end
 
     context "when providing a field" do
 
@@ -224,12 +311,21 @@ describe Mongoid::Criterion::Optional do
     context "with not using object ids" do
 
       before do
-        @previous_id_type = Person.fields["_id"].type
-        Person.identity :type => String
+        Person.field(
+          :_id,
+          type: String,
+          pre_processed: true,
+          default: ->{ BSON::ObjectId.new.to_s }
+        )
       end
 
       after do
-        Person.identity :type => @previous_id_type
+        Person.field(
+          :_id,
+          type: BSON::ObjectId,
+          pre_processed: true,
+          default: ->{ BSON::ObjectId.new }
+        )
       end
 
       context "when passing a single id" do
@@ -245,7 +341,7 @@ describe Mongoid::Criterion::Optional do
           end
 
           it "adds the _id query to the selector" do
-            criteria.selector.should == { :_id => id }
+            criteria.selector.should eq({ :_id => id })
           end
 
           it "returns a copy" do
@@ -263,8 +359,8 @@ describe Mongoid::Criterion::Optional do
             base.for_ids(id)
           end
 
-          it "adds the _id query to the selector" do
-            criteria.selector.should == { :_id => id }
+          it "adds the string _id query to the selector" do
+            criteria.selector.should eq({ :_id => id.to_s })
           end
 
           it "returns a copy" do
@@ -296,7 +392,7 @@ describe Mongoid::Criterion::Optional do
         end
 
         it "adds the _id query to the selector" do
-          base.for_ids(ids).selector.should == { :_id => ids.first }
+          base.for_ids(ids).selector.should eq({ :_id => ids.first.to_s })
         end
       end
     end
@@ -304,12 +400,12 @@ describe Mongoid::Criterion::Optional do
     context "when using object ids" do
 
       before do
-        @previous_id_type = Person.fields["_id"].type
-        Person.identity :type => BSON::ObjectId
-      end
-
-      after do
-        Person.identity :type => @previous_id_type
+        Person.field(
+          :_id,
+          type: BSON::ObjectId,
+          pre_processed: true,
+          default: ->{ BSON::ObjectId.new }
+        )
       end
 
       context "when passing a single id" do
@@ -325,7 +421,7 @@ describe Mongoid::Criterion::Optional do
           end
 
           it "adds the _id query to the selector convert like BSON::ObjectId" do
-            criteria.selector.should == { :_id => BSON::ObjectId(id) }
+            criteria.selector.should eq({ :_id => BSON::ObjectId(id) })
           end
 
           it "returns a copy" do
@@ -344,7 +440,7 @@ describe Mongoid::Criterion::Optional do
           end
 
           it "adds the _id query to the selector without cast" do
-            criteria.selector.should == { :_id => id }
+            criteria.selector.should eq({ :_id => id })
           end
 
           it "returns a copy" do
@@ -433,6 +529,46 @@ describe Mongoid::Criterion::Optional do
   end
 
   describe "#order_by" do
+
+    context "when a field is localized" do
+
+      let(:base) do
+        Mongoid::Criteria.new(Product)
+      end
+
+      context "when no locale is defined" do
+
+        let(:criteria) do
+          base.order_by([[:description, :desc]])
+        end
+
+        it "converts to dot notation with the default locale" do
+          criteria.options[:sort].should == [[:"description.en", :desc]]
+        end
+
+      end
+
+      context "when a locale is defined" do
+
+        before do
+          ::I18n.locale = :de
+        end
+
+        after do
+          ::I18n.locale = :en
+        end
+
+        let(:criteria) do
+          base.order_by([[:description, :desc]])
+        end
+
+        it "converts to dot notation with the default locale" do
+          criteria.options[:sort].should == [[:"description.de", :desc]]
+        end
+
+      end
+
+    end
 
     context "when field names and direction specified" do
 

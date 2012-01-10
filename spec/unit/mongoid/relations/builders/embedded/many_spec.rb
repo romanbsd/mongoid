@@ -2,8 +2,16 @@ require "spec_helper"
 
 describe Mongoid::Relations::Builders::Embedded::Many do
 
+  before(:all) do
+    [ Square, Circle ]
+  end
+
+  let(:base) do
+    stub
+  end
+
   let(:builder) do
-    described_class.new(metadata, object)
+    described_class.new(base, metadata, object)
   end
 
   describe "#build" do
@@ -53,7 +61,7 @@ describe Mongoid::Relations::Builders::Embedded::Many do
       end
 
       let(:builder) do
-        described_class.new(metadata, nil)
+        described_class.new(nil, metadata, nil)
       end
 
       before do
@@ -122,27 +130,6 @@ describe Mongoid::Relations::Builders::Embedded::Many do
       it "sets the object on the document" do
         @documents[0].radius.should == 100
         @documents[1].width.should == 50
-      end
-    end
-
-
-    context "when when order specified" do
-      let(:metadata) do
-        stub_everything(:klass => Shape, :name => :shapes, :order => :radius.asc)
-      end
-
-      let(:small_circle)  { { "_type" => "Circle", "radius" => 100} }
-      let(:normal_circle) { { "_type" => "Circle", "radius" => 200} }
-      let(:big_circle)    { { "_type" => "Circle", "radius" => 500}  }
-
-      let(:object) {[ small_circle, big_circle, normal_circle ]}
-
-      before do
-        @documents = builder.build
-      end
-
-      it "returns ordered documents" do
-        @documents.map(&:radius).should == [ small_circle["radius"], normal_circle["radius"], big_circle["radius"] ]
       end
     end
   end

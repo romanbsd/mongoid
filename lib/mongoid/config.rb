@@ -1,7 +1,9 @@
 # encoding: utf-8
 require "uri"
 require "mongoid/config/database"
+require "mongoid/config/environment"
 require "mongoid/config/replset_database"
+require "mongoid/config/options"
 
 module Mongoid #:nodoc
 
@@ -11,74 +13,25 @@ module Mongoid #:nodoc
   # @todo Durran: This module needs an overhaul, remove singleton, etc.
   module Config
     extend self
+    extend Options
     include ActiveModel::Observing
 
-    attr_accessor :master, :settings, :defaults
-    @settings = {}
-    @defaults = {}
-
-    # Define a configuration option with a default.
-    #
-    # @example Define the option.
-    #   Config.option(:persist_in_safe_mode, :default => false)
-    #
-    # @param [ Symbol ] name The name of the configuration option.
-    # @param [ Hash ] options Extras for the option.
-    #
-    # @option options [ Object ] :default The default value.
-    #
-    # @since 2.0.0.rc.1
-    def option(name, options = {})
-      defaults[name] = settings[name] = options[:default]
-
-      class_eval <<-RUBY
-        def #{name}
-          settings[#{name.inspect}]
-        end
-
-        def #{name}=(value)
-          settings[#{name.inspect}] = value
-        end
-
-        def #{name}?
-          #{name}
-        end
-      RUBY
-    end
+    # @attribute [rw] master The master database.
+    attr_accessor :master
 
     option :allow_dynamic_fields, :default => true
     option :autocreate_indexes, :default => false
-    option :binding_defaults, :default => { :binding => false, :continue => true }
-    option :embedded_object_id, :default => true
     option :identity_map_enabled, :default => false
     option :include_root_in_json, :default => false
     option :max_retries_on_connection_failure, :default => 0
     option :parameterize_keys, :default => true
+    option :scope_overwrite_exception, :default => false
     option :persist_in_safe_mode, :default => false
     option :preload_models, :default => false
     option :raise_not_found_error, :default => true
     option :skip_version_check, :default => false
     option :time_zone, :default => nil
     option :use_utc, :default => false
-
-    # Adds a new I18n locale file to the load path.
-    #
-    # @example Add a portuguese locale.
-    #   Mongoid::Config.add_language('pt')
-    #
-    # @example Add all available languages.
-    #   Mongoid::Config.add_language('*')
-    #
-    # @param [ String ] language_code The language to add.
-    def add_language(language_code = nil)
-      Dir[
-        File.join(
-          File.dirname(__FILE__), "..", "config", "locales", "#{language_code}.yml"
-      )
-      ].each do |file|
-        I18n.load_path << File.expand_path(file)
-      end
-    end
 
     # Get any extra databases that have been configured.
     #
@@ -104,12 +57,7 @@ module Mongoid #:nodoc
     #
     # @return [ Array<String> ] An array of bad field names.
     def destructive_fields
-      @destructive_fields ||= lambda {
-        klass = Class.new do
-          include Mongoid::Document
-        end
-        klass.instance_methods(true).collect { |method| method.to_s }
-      }.call
+      Components.prohibited_methods
     end
 
     # Configure mongoid from a hash. This is usually called after parsing a
@@ -137,10 +85,8 @@ module Mongoid #:nodoc
     #
     # @since 2.0.1
     def load!(path)
-      environment = defined?(Rails) && Rails.respond_to?(:env) ? Rails.env : ENV["RACK_ENV"]
-      settings = YAML.load(ERB.new(File.new(path).read).result)[environment]
-      if settings.present?
-        from_hash(settings)
+      Environment.load_yaml(path).tap do |settings|
+        from_hash(settings) if settings.present?
       end
     end
 
@@ -172,7 +118,12 @@ module Mongoid #:nodoc
     #
     # @return [ Logger ] The newly set logger.
     def logger=(logger)
-      @logger = logger
+      case logger
+      when false, nil then @logger = nil
+      when true then @logger = default_logger
+      else
+        @logger = logger if logger.respond_to?(:info)
+      end
     end
 
     # Purge all data in all collections, including indexes.
@@ -208,7 +159,7 @@ module Mongoid #:nodoc
     # set is not a valid +Mongo::DB+, then an error will be raised.
     #
     # @example Set the master database.
-    #   config.master = Mongo::Connection.db("test")
+    #   config.master = Mongo::Connection.new.db("test")
     #
     # @param [ Mongo::DB ] db The master database.
     #
@@ -258,24 +209,6 @@ module Mongoid #:nodoc
         # time the connection is accessed.
         @reconnect = true
       end
-    end
-
-    # Reset the configuration options to the defaults.
-    #
-    # @example Reset the configuration options.
-    #   config.reset
-    def reset
-      settings.replace(defaults)
-    end
-
-    # @deprecated User replica sets instead.
-    def slaves
-      slave_warning!
-    end
-
-    # @deprecated User replica sets instead.
-    def slaves=(dbs)
-      slave_warning!
     end
 
     protected
@@ -335,15 +268,6 @@ module Mongoid #:nodoc
         dbs[name], dbs["#{name}_slaves"] = configure_databases(options)
         end
       end
-    end
-
-    # Temporarily here so people can move to replica sets.
-    def slave_warning!
-      warn(
-        "Using Mongoid for traditional slave databases will be removed in the " +
-        "next release in preference of replica sets. Please change your setup " +
-        "accordingly."
-      )
     end
   end
 end

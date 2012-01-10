@@ -4,7 +4,8 @@ module Mongoid #:nodoc:
     class Mongo
       attr_accessor :criteria
 
-      delegate :klass, :options, :field_list, :selector, :to => :criteria
+      delegate :cached?, :klass, :options, :field_list, :selector, :to => :criteria
+      delegate :collection, :to => :klass
 
       # Perform an add to set on the matching documents.
       #
@@ -86,7 +87,11 @@ module Mongoid #:nodoc:
       #
       # @return [ Integer ] The count of documents.
       def count(extras = false)
-        @count ||= klass.collection.find(selector, process_options).count(extras)
+        if cached?
+          @count ||= collection.find(selector, process_options).count(extras)
+        else
+          collection.find(selector, process_options).count(extras)
+        end
       end
       alias :size :count
       alias :length :count
@@ -140,7 +145,40 @@ module Mongoid #:nodoc:
       #
       # @return [ Cursor ] An enumerable +Cursor+ of results.
       def execute
-        klass.collection.find(selector, process_options) || []
+        collection, options = klass.collection, process_options
+        if criteria.inclusions.any?
+          collection.find(selector, options).entries.tap do |docs|
+            parent_ids = docs.map(&:id)
+            criteria.inclusions.reject! do |metadata|
+              if metadata.macro == :belongs_to
+                child_ids = load_ids(metadata.foreign_key)
+                metadata.eager_load(child_ids)
+              else
+                metadata.eager_load(parent_ids)
+              end
+            end
+          end
+        else
+          collection.find(selector, options)
+        end
+      end
+
+      # Loads an array of ids only for the current criteria. Used by eager
+      # loading to determine the documents to load.
+      #
+      # @example Load the related ids.
+      #   criteria.load_ids("person_id")
+      #
+      # @param [ String ] key The id or foriegn key string.
+      #
+      # @return [ Array<String, BSON::ObjectId> ] The ids to load.
+      #
+      # @since 2.2.0
+      def load_ids(key)
+        klass.collection.driver.find(
+          selector,
+          process_options.merge({ :fields => { key => 1 }})
+        ).map { |doc| doc[key] }
       end
 
       # Return the first result for the +Context+.
@@ -150,7 +188,7 @@ module Mongoid #:nodoc:
       #
       # @return [ Document ] The first document in the collection.
       def first
-        attributes = klass.collection.find_one(selector, process_options)
+        attributes = klass.collection.find_one(selector, options_with_default_sorting)
         attributes ? Mongoid::Factory.from_db(klass, attributes) : nil
       end
       alias :one :first
@@ -199,7 +237,7 @@ module Mongoid #:nodoc:
       # @example Iterate over the results.
       #   context.iterate { |doc| p doc }
       def iterate(&block)
-        return caching(&block) if criteria.cached?
+        return caching(&block) if cached?
         if block_given?
           execute.each { |doc| yield doc }
         end
@@ -214,10 +252,8 @@ module Mongoid #:nodoc:
       #
       # @return [ Document ] The last document in the collection.
       def last
-        opts = process_options
-        sorting = opts[:sort] ||= []
-        sorting << [:_id, :asc]
-        opts[:sort] = sorting.map{ |option| [ option[0], option[1].invert ] }.uniq
+        opts = options_with_default_sorting
+        opts[:sort] = opts[:sort].map{ |option| [ option[0], option[1].invert ] }.uniq
         attributes = klass.collection.find_one(selector, opts)
         attributes ? Mongoid::Factory.from_db(klass, attributes) : nil
       end
@@ -236,7 +272,7 @@ module Mongoid #:nodoc:
       #
       # @return [ Numeric ] A numeric max value.
       def max(field)
-        grouped(:max, field.to_s, Javascript.max)
+        grouped(:max, field.to_s, Javascript.max, Javascript.max_finalize)
       end
 
       # Return the min value for a field.
@@ -253,7 +289,7 @@ module Mongoid #:nodoc:
       #
       # @return [ Numeric ] A numeric minimum value.
       def min(field)
-        grouped(:min, field.to_s, Javascript.min)
+        grouped(:min, field.to_s, Javascript.min, Javascript.min_finalize)
       end
 
       # Perform a pull on the matching documents.
@@ -300,7 +336,7 @@ module Mongoid #:nodoc:
       #
       # @return [ Numeric ] A numeric value that is the sum.
       def sum(field)
-        grouped(:sum, field.to_s, Javascript.sum)
+        grouped(:sum, field.to_s, Javascript.sum, Javascript.sum_finalize)
       end
 
       # Very basic update that will perform a simple atomic $set of the
@@ -319,7 +355,7 @@ module Mongoid #:nodoc:
           { "$set" => attributes },
           Safety.merge_safety_options(:multi => true)
         ).tap do
-          Threaded.clear_safety_options!
+          Threaded.clear_options!
         end
       end
       alias :update :update_all
@@ -353,13 +389,30 @@ module Mongoid #:nodoc:
       # @param [ String ] reduce The reduce JS function.
       #
       # @return [ Numeric ] A numeric result.
-      def grouped(start, field, reduce)
+      def grouped(start, field, reduce, finalize)
         collection = klass.collection.group(
           :cond => selector,
           :initial => { start => "start" },
+          :finalize => finalize,
           :reduce => reduce.gsub("[field]", field)
         )
         collection.empty? ? nil : collection.first[start.to_s]
+      end
+
+      # Get the options hash with the default sorting options provided.
+      #
+      # @example Get the options.
+      #   criteria.options_with_default_sorting
+      #
+      # @return [ Hash ] The options.
+      #
+      # @since 2.3.2
+      def options_with_default_sorting
+        process_options.tap do |opts|
+          if opts[:sort].blank?
+            opts[:sort] = [[ :_id, :asc ]]
+          end
+        end
       end
 
       # Filters the field list. If no fields have been supplied, then it will be

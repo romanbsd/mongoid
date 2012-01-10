@@ -2,9 +2,7 @@ namespace :db do
 
   unless Rake::Task.task_defined?("db:drop")
     desc 'Drops all the collections for the database for the current Rails.env'
-    task :drop => :environment do
-      Mongoid.master.collections.select {|c| c.name !~ /system/ }.each { |c| c.drop }
-    end
+    task :drop => "mongoid:drop"
   end
 
   unless Rake::Task.task_defined?("db:seed")
@@ -79,7 +77,15 @@ namespace :db do
 
     desc 'Create the indexes defined on your mongoid models'
     task :create_indexes => :environment do
-      ::Rails::Mongoid.create_indexes("app/models/**/*.rb")
+      engines_models_paths = Rails.application.railties.engines.map do |engine|
+        engine.paths["app/models"].expanded
+      end
+      root_models_paths = Rails.application.paths["app/models"]
+      models_paths = engines_models_paths.push(root_models_paths).flatten
+
+      models_paths.each do |path|
+        ::Rails::Mongoid.create_indexes("#{path}/**/*.rb")
+      end
     end
 
     def convert_ids(obj)
@@ -161,6 +167,11 @@ namespace :db do
         collection = Mongoid.master.collection(collection_name)
         collection.db["#{collection.name}_old"].drop
       end
+    end
+
+    desc "Drops the database for the current Rails.env"
+    task :drop => :environment do
+      Mongoid.master.collections.select {|c| c.name !~ /system/ }.each { |c| c.drop }
     end
 
     ########

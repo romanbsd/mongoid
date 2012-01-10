@@ -1,6 +1,7 @@
 # encoding: utf-8
 require "mongoid/matchers/default"
 require "mongoid/matchers/all"
+require "mongoid/matchers/and"
 require "mongoid/matchers/exists"
 require "mongoid/matchers/gt"
 require "mongoid/matchers/gte"
@@ -22,6 +23,7 @@ module Mongoid #:nodoc:
 
       MATCHERS = {
         "$all" => Matchers::All,
+        "$and" => Matchers::And,
         "$exists" => Matchers::Exists,
         "$gt" => Matchers::Gt,
         "$gte" => Matchers::Gte,
@@ -49,13 +51,41 @@ module Mongoid #:nodoc:
       # @since 2.0.0.rc.7
       def matcher(document, key, value)
         if value.is_a?(Hash)
-          MATCHERS[value.keys.first].new(document.attributes[key.to_s])
-        else
-          if key == "$or"
-            Matchers::Or.new(value, document)
+          matcher = MATCHERS[value.keys.first]
+          if matcher
+            matcher.new(extract_attribute(document, key))
           else
-            Default.new(document.attributes[key.to_s])
+            Default.new(extract_attribute(document, key))
           end
+        else
+          case key
+            when "$or" then Matchers::Or.new(value, document)
+            when "$and" then Matchers::And.new(value, document)
+            else Default.new(extract_attribute(document, key))
+          end
+        end
+      end
+
+      private
+
+      # Extract the attribute from the key, being smarter about dot notation.
+      #
+      # @example Extract the attribute.
+      #   strategy.extract_attribute(doc, "info.field")
+      #
+      # @param [ Document ] document The document.
+      # @param [ String ] key The key.
+      #
+      # @return [ Object ] The value of the attribute.
+      #
+      # @since 2.2.1
+      def extract_attribute(document, key)
+        if (key_string = key.to_s) =~ /.+\..+/
+          key_string.split('.').inject(document.attributes) do |attribs, key|
+            attribs.try(:[], key)
+          end
+        else
+          document.attributes[key_string]
         end
       end
     end

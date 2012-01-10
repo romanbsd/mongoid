@@ -6,6 +6,23 @@ describe Mongoid::Dirty do
     [ Person, Preference ].each(&:delete_all)
   end
 
+  context "when changing a hash of hashes" do
+
+    let!(:person) do
+      Person.create(:ssn => "123-11-1111", :map => { "test" => {}})
+    end
+
+    before do
+      person.map["test"]["value"] = 10
+    end
+
+    it "records the changes" do
+      person.changes.should eq(
+        { "map" => [{ "test" => {}}, { "test" => { "value" => 10 }}]}
+      )
+    end
+  end
+
   context "when modifying a many to many key" do
 
     let!(:person) do
@@ -21,9 +38,9 @@ describe Mongoid::Dirty do
     end
 
     it "records the foreign key dirty changes" do
-      person.previous_changes.should eq({
-        "preference_ids" => [[], [ preference.id ]], "version" => [1, 2]
-      })
+      person.previous_changes["preference_ids"].should eq(
+        [[], [ preference.id ]]
+      )
     end
   end
 

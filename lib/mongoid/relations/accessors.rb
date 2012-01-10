@@ -22,8 +22,8 @@ module Mongoid # :nodoc:
       # @return [ Proxy ] The relation.
       #
       # @since 2.0.0.rc.1
-      def build(name, object, metadata, options = {})
-        relation = create_relation(object, metadata, options[:loading])
+      def build(name, object, metadata)
+        relation = create_relation(object, metadata)
         set_relation(name, relation)
       end
 
@@ -38,9 +38,9 @@ module Mongoid # :nodoc:
       # @return [ Proxy ] The relation.
       #
       # @since 2.0.0.rc.1
-      def create_relation(object, metadata, loading = false)
+      def create_relation(object, metadata)
         type = @attributes[metadata.inverse_type]
-        target = metadata.builder(object, loading).build(type)
+        target = metadata.builder(self, object).build(type)
         target ? metadata.relation.new(self, target, metadata) : nil
       end
 
@@ -74,20 +74,6 @@ module Mongoid # :nodoc:
         instance_variable_set("@#{name}", relation)
       end
 
-      # Replace an existing relation with a new one.
-      #
-      # @example Replace the relation.
-      #   document.substitute("addresses", Address.new)
-      #
-      # @param [ String ] name The name of the relation.
-      # @param [ Document ] object The document to replace with.
-      # @param [ Hash ] options The options.
-      #
-      # @since 2.0.0
-      def substitute(name, object)
-        set_relation(name, ivar(name).substitute(object))
-      end
-
       module ClassMethods #:nodoc:
 
         # Defines the getter for the relation. Nothing too special here: just
@@ -110,8 +96,10 @@ module Mongoid # :nodoc:
               if instance_variable_defined?(variable) && !reload
                 instance_variable_get(variable)
               else
-                building do
-                  build(name, attributes[metadata.key], metadata, :loading => true)
+                _building do
+                  _loading do
+                    build(name, attributes[metadata.key], metadata)
+                  end
                 end
               end
             end
@@ -134,16 +122,12 @@ module Mongoid # :nodoc:
         # @since 2.0.0.rc.1
         def setter(name, metadata)
           tap do
-            define_method("#{name}=") do |*args|
-              object = args.first
-              if relation_exists?(name) && !object.is_a?(Hash)
-                substitute(name, object)
+            define_method("#{name}=") do |object|
+              if relation_exists?(name) || metadata.many? ||
+                (object.blank? && send(name))
+                set_relation(name, send(name).substitute(object.substitutable))
               else
-                if metadata.embedded? && object.blank? && send(name)
-                  substitute(name, object)
-                else
-                  build(name, object, metadata)
-                end
+                build(name, object.substitutable, metadata)
               end
             end
           end

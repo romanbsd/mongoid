@@ -20,6 +20,29 @@ module Mongoid #:nodoc:
       end
       alias :all_in :all
 
+      # Adds a criterion to the criteria that specifies multiple expressions
+      # that *all* must match. This uses MongoDB's $and operator under the
+      # covers.
+      #
+      # @example Match all provided expressions.
+      #   criteria.all_of(:name => value, :age.gt => 18)
+      #
+      # @param [ Array<Hash> ] Multiple hash expressions.
+      #
+      # @return [ Criteria ] The criteria object.
+      #
+      # @since 2.3.0
+      def all_of(*args)
+        clone.tap do |crit|
+          unless args.empty?
+            criterion = @selector["$and"] || []
+            converted = BSON::ObjectId.convert(klass, args.flatten)
+            expanded = converted.collect { |hash| hash.expand_complex_criteria }
+            crit.selector["$and"] = criterion.concat(expanded)
+          end
+        end
+      end
+
       # Adds a criterion to the +Criteria+ that specifies values where any can
       # be matched in order to return results. This is similar to an SQL "IN"
       # clause. The MongoDB conditional operator that will be used is "$in".
@@ -73,10 +96,7 @@ module Mongoid #:nodoc:
       end
       alias :or :any_of
 
-      # Find the matchind document in the criteria, either based on id or
-      # conditions.
-      #
-      # @todo Durran: DRY up duplicated code in a few places.
+      # Find the matchind document(s) in the criteria for the provided ids.
       #
       # @example Find by an id.
       #   criteria.find(BSON::ObjectId.new)
@@ -84,29 +104,49 @@ module Mongoid #:nodoc:
       # @example Find by multiple ids.
       #   criteria.find([ BSON::ObjectId.new, BSON::ObjectId.new ])
       #
-      # @example Conditionally find all matching documents.
-      #   criteria.find(:all, :conditions => { :title => "Sir" })
+      # @param [ Array<BSON::ObjectId> ] args The ids to search for.
       #
-      # @example Conditionally find the first document.
-      #   criteria.find(:first, :conditions => { :title => "Sir" })
-      #
-      # @example Conditionally find the last document.
-      #   criteria.find(:last, :conditions => { :title => "Sir" })
-      #
-      # @param [ Symbol, BSON::ObjectId, Array<BSON::ObjectId> ] arg The
-      #   argument to search with.
-      # @param [ Hash ] options The options to search with.
-      #
-      # @return [ Document, Criteria ] The matching document(s).
+      # @return [ Array<Document>, Document ] The matching document(s).
       def find(*args)
-        type, crit = search(*args)
-        case type
-        when :first then crit.one
-        when :last then crit.last
-        when :ids then execute_or_raise(args, crit)
-        else
-          crit
+        ids = args.flatten
+        raise_invalid if ids.any?(&:nil?)
+        for_ids(ids).execute_or_raise(args)
+      end
+
+      # Execute the criteria or raise an error if no documents found.
+      #
+      # @example Execute or raise
+      #   criteria.execute_or_raise(id)
+      #
+      # @param [ Object ] args The arguments passed.
+      #
+      # @raise [ Errors::DocumentNotFound ] If nothing returned.
+      #
+      # @return [ Document, Array<Document> ] The document(s).
+      #
+      # @since 2.0.0
+      def execute_or_raise(args)
+        (args[0].is_a?(Array) ? entries : from_map_or_db).tap do |result|
+          if Mongoid.raise_not_found_error && !args.flatten.blank?
+            raise Errors::DocumentNotFound.new(klass, args) if result._vacant?
+          end
         end
+      end
+
+      # Get the document from the identity map, and if not found hit the
+      # database.
+      #
+      # @example Get the document from the map or criteria.
+      #   criteria.from_map_or_db(criteria)
+      #
+      # @param [ Criteria ] The cloned criteria.
+      #
+      # @return [ Document ] The found document.
+      #
+      # @since 2.2.1
+      def from_map_or_db
+        doc = IdentityMap.get(klass, extract_id || selector)
+        doc && doc.matches?(selector) ? doc : first
       end
 
       # Adds a criterion to the +Criteria+ that specifies values where any can
@@ -124,6 +164,49 @@ module Mongoid #:nodoc:
         update_selector(attributes, "$in", :&)
       end
       alias :any_in :in
+
+      # Eager loads all the provided relations. Will load all the documents
+      # into the identity map who's ids match based on the extra query for the
+      # ids.
+      #
+      # @note This will only work if Mongoid's identity map is enabled. To do
+      #   so set identity_map_enabled: true in your mongoid.yml
+      #
+      # @note This will work for embedded relations that reference another
+      #   collection via belongs_to as well.
+      #
+      # @note Eager loading brings all the documents into memory, so there is a
+      #   sweet spot on the performance gains. Internal benchmarks show that
+      #   eager loading becomes slower around 100k documents, but this will
+      #   naturally depend on the specific application.
+      #
+      # @example Eager load the provided relations.
+      #   Person.includes(:posts, :game)
+      #
+      # @param [ Array<Symbol> ] relations The names of the relations to eager
+      #   load.
+      #
+      # @return [ Criteria ] The cloned criteria.
+      #
+      # @since 2.2.0
+      def includes(*relations)
+        relations.each do |name|
+          inclusions.push(klass.reflect_on_association(name))
+        end
+        clone
+      end
+
+      # Get a list of criteria that are to be executed for eager loading.
+      #
+      # @example Get the eager loading inclusions.
+      #   Person.includes(:game).inclusions
+      #
+      # @return [ Array<Metadata> ] The inclusions.
+      #
+      # @since 2.2.0
+      def inclusions
+        @inclusions ||= []
+      end
 
       # Adds a criterion to the +Criteria+ that specifies values to do
       # geospacial searches by. The field must be indexed with the "2d" option.
@@ -158,40 +241,27 @@ module Mongoid #:nodoc:
               BSON::ObjectId.convert(klass, selector || {}, false).expand_complex_criteria
           end
 
+          # @todo: Durran: 3.0.0: refactor the merging into separate strategies
+          # to clean this funkiness up.
           selector.each_pair do |key, value|
-            if crit.selector.has_key?(key) &&
-              crit.selector[key].respond_to?(:merge!) &&
-              value.respond_to?(:merge!)
-              crit.selector[key] =
-                crit.selector[key].merge!(value) do |key, old, new|
-                  key == '$in' ? old & new : new
+            if crit.selector.has_key?(key)
+              if key.mongoid_id?
+                if crit.selector.has_key?("$and")
+                  crit.selector["$and"] << { key => value }
+                else
+                  crit.selector["$and"] = [{ key => crit.selector.delete(key) }, { key => value }]
                 end
+              elsif crit.selector[key].respond_to?(:merge) && value.respond_to?(:merge)
+                crit.selector[key] =
+                  crit.selector[key].merge(value) do |key, old, new|
+                    key == '$in' ? old & new : new
+                  end
+              else
+                crit.selector[key] = value
+              end
             else
               crit.selector[key] = value
             end
-          end
-        end
-      end
-
-      private
-
-      # Execute the criteria or raise an error if no documents found.
-      #
-      # @example Execute or raise
-      #   criteria.execute_or_raise(id, criteria)
-      #
-      # @param [ Object ] args The arguments passed.
-      # @param [ Criteria ] criteria The criteria to execute.
-      #
-      # @raise [ Errors::DocumentNotFound ] If nothing returned.
-      #
-      # @return [ Document, Array<Document> ] The document(s).
-      #
-      # @since 2.0.0
-      def execute_or_raise(args, criteria)
-        (args[0].is_a?(Array) ? criteria.entries : criteria.one).tap do |result|
-          if Mongoid.raise_not_found_error && !args.flatten.blank?
-            raise Errors::DocumentNotFound.new(klass, args) if result._vacant?
           end
         end
       end

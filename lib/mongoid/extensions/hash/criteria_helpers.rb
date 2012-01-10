@@ -17,15 +17,27 @@ module Mongoid #:nodoc:
         def expand_complex_criteria
           {}.tap do |hsh|
             each_pair do |k,v|
-              case k
-              when Mongoid::Criterion::Complex
+              if k.respond_to?(:key) && k.respond_to?(:to_mongo_query)
                 hsh[k.key] ||= {}
-                hsh[k.key].merge!({"$#{k.operator}" => v})
+                hsh[k.key].merge!(k.to_mongo_query(v))
               else
                 hsh[k] = v
               end
             end
           end
+        end
+
+        # Get the id attribute from this hash, whether it's prefixed with an
+        # underscore or is a symbol.
+        #
+        # @example Extract the id.
+        #   { :_id => 1 }.extract_id
+        #
+        # @return [ Object ] The value of the id.
+        #
+        # @since 2.3.2
+        def extract_id
+          self["id"] || self["_id"] || self[:id] || self[:_id]
         end
       end
     end

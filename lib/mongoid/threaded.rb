@@ -1,4 +1,6 @@
 # encoding: utf-8
+require "mongoid/threaded/lifecycle"
+
 module Mongoid #:nodoc:
 
   # This module contains logic for easy access to objects that have a lifecycle
@@ -6,56 +8,72 @@ module Mongoid #:nodoc:
   module Threaded
     extend self
 
-    # Is the current thread in binding mode?
+    # Begin entry into a named thread local stack.
     #
-    # @example Is the thread in binding mode?
-    #   Threaded.binding?
+    # @example Begin entry into the stack.
+    #   Threaded.begin(:create)
     #
-    # @return [ true, false ] If the thread is in binding mode?
+    # @param [ Symbol ] name The name of the stack
     #
-    # @since 2.1.0
-    def binding?
-      Thread.current[:"[mongoid]:binding-mode"] ||= false
+    # @return [ true ] True.
+    #
+    # @since 2.4.0
+    def begin(name)
+      stack(name).push(true)
     end
 
-    # Set the binding mode for the current thread.
+    # Are in the middle of executing the named stack
     #
-    # @example Set the binding mode.
-    #   Threaded.binding = true
+    # @example Are we in the stack execution?
+    #   Threaded.executing?(:create)
     #
-    # @param [ true, false ] mode The current binding mode.
+    # @param [ Symbol ] name The name of the stack
     #
-    # @return [ true, false ] The current binding mode.
+    # @return [ true ] If the stack is being executed.
     #
-    # @since 2.1.0
-    def binding=(mode)
-      Thread.current[:"[mongoid]:binding-mode"] = mode
+    # @since 2.4.0
+    def executing?(name)
+      !stack(name).empty?
     end
 
-    # Is the current thread in building mode?
+    # Exit from a named thread local stack.
     #
-    # @example Is the thread in building mode?
-    #   Threaded.building?
+    # @example Exit from the stack.
+    #   Threaded.exit(:create)
     #
-    # @return [ true, false ] If the thread is in building mode?
+    # @param [ Symbol ] name The name of the stack
     #
-    # @since 2.1.0
-    def building?
-      Thread.current[:"[mongoid]:building-mode"] ||= false
+    # @return [ true ] True.
+    #
+    # @since 2.4.0
+    def exit(name)
+      stack(name).pop
     end
 
-    # Set the building mode for the current thread.
+    # Get the named stack.
     #
-    # @example Set the building mode.
-    #   Threaded.building = true
+    # @example Get a stack by name
+    #   Threaded.stack(:create)
     #
-    # @param [ true, false ] mode The current building mode.
+    # @param [ Symbol ] name The name of the stack
     #
-    # @return [ true, false ] The current building mode.
+    # @return [ Array ] The stack.
     #
-    # @since 2.1.0
-    def building=(mode)
-      Thread.current[:"[mongoid]:building-mode"] = mode
+    # @since 2.4.0
+    def stack(name)
+      Thread.current[:"[mongoid]:#{name}-stack"] ||= []
+    end
+
+    # Begin validating a document on the current thread.
+    #
+    # @example Begin validation.
+    #   Threaded.begin_validate(doc)
+    #
+    # @param [ Document ] document The document to validate.
+    #
+    # @since 2.1.9
+    def begin_validate(document)
+      validations_for(document.class).push(document.id)
     end
 
     # Clear out all the safety options set using the safely proxy.
@@ -68,6 +86,29 @@ module Mongoid #:nodoc:
     # @since 2.1.0
     def clear_safety_options!
       Thread.current[:"[mongoid]:safety-options"] = nil
+    end
+
+    # Clear out all options set on a one-time basis.
+    #
+    # @example Clear out the options.
+    #   Threaded.clear_options!
+    #
+    # @since 2.3.0
+    def clear_options!
+      clear_safety_options!
+      self.timeless = false
+    end
+
+    # Exit validating a document on the current thread.
+    #
+    # @example Exit validation.
+    #   Threaded.exit_validate(doc)
+    #
+    # @param [ Document ] document The document to validate.
+    #
+    # @since 2.1.9
+    def exit_validate(document)
+      validations_for(document.class).delete_one(document.id)
     end
 
     # Get the identity map off the current thread.
@@ -90,8 +131,8 @@ module Mongoid #:nodoc:
     # @return [ Object ] The batch insert consumer.
     #
     # @since 2.1.0
-    def insert
-      Thread.current[:"[mongoid]:insert-consumer"]
+    def insert(name)
+      Thread.current[:"[mongoid][#{name}]:insert-consumer"]
     end
 
     # Set the insert consumer on the current thread.
@@ -104,8 +145,8 @@ module Mongoid #:nodoc:
     # @return [ Object ] The insert consumer.
     #
     # @since 2.1.0
-    def insert=(consumer)
-      Thread.current[:"[mongoid]:insert-consumer"] = consumer
+    def set_insert(name, consumer)
+      Thread.current[:"[mongoid][#{name}]:insert-consumer"] = consumer
     end
 
     # Get the safety options for the current thread.
@@ -146,6 +187,30 @@ module Mongoid #:nodoc:
       Thread.current[:"[mongoid]:scope-stack"] ||= {}
     end
 
+    # Get the value of the one-off timeless call.
+    #
+    # @example Get the timeless value.
+    #   Threaded.timeless
+    #
+    # @return [ true, false ] The timeless setting.
+    #
+    # @since 2.3.0
+    def timeless
+      !!Thread.current[:"[mongoid]:timeless"]
+    end
+
+    # Set the value of the one-off timeless call.
+    #
+    # @example Set the timeless value.
+    #   Threaded.timeless = true
+    #
+    # @param [ true, false ] value The value.
+    #
+    # @since 2.3.0
+    def timeless=(value)
+      Thread.current[:"[mongoid]:timeless"] = value
+    end
+
     # Get the update consumer from the current thread.
     #
     # @example Get the update consumer.
@@ -154,8 +219,8 @@ module Mongoid #:nodoc:
     # @return [ Object ] The atomic update consumer.
     #
     # @since 2.1.0
-    def update
-      Thread.current[:"[mongoid]:update-consumer"]
+    def update_consumer(klass)
+      Thread.current[:"[mongoid][#{klass}]:update-consumer"]
     end
 
     # Set the update consumer on the current thread.
@@ -168,8 +233,60 @@ module Mongoid #:nodoc:
     # @return [ Object ] The update consumer.
     #
     # @since 2.1.0
-    def update=(consumer)
-      Thread.current[:"[mongoid]:update-consumer"] = consumer
+    def set_update_consumer(klass, consumer)
+      Thread.current[:"[mongoid][#{klass}]:update-consumer"] = consumer
+    end
+
+    # Is the current thread setting timestamps?
+    #
+    # @example Is the current thread timestamping?
+    #   Threaded.timestamping?
+    #
+    # @return [ true, false ] If timestamps can be applied.
+    #
+    # @since 2.3.0
+    def timestamping?
+      !timeless
+    end
+
+    # Is the document validated on the current thread?
+    #
+    # @example Is the document validated?
+    #   Threaded.validated?(doc)
+    #
+    # @param [ Document ] document The document to check.
+    #
+    # @return [ true, false ] If the document is validated.
+    #
+    # @since 2.1.9
+    def validated?(document)
+      validations_for(document.class).include?(document.id)
+    end
+
+    # Get all validations on the current thread.
+    #
+    # @example Get all validations.
+    #   Threaded.validations
+    #
+    # @return [ Hash ] The current validations.
+    #
+    # @since 2.1.9
+    def validations
+      Thread.current[:"[mongoid]:validations"] ||= {}
+    end
+
+    # Get all validations on the current thread for the class.
+    #
+    # @example Get all validations.
+    #   Threaded.validations_for(Person)
+    #
+    # @param [ Class ] The class to check.
+    #
+    # @return [ Array ] The current validations.
+    #
+    # @since 2.1.9
+    def validations_for(klass)
+      validations[klass] ||= []
     end
   end
 end

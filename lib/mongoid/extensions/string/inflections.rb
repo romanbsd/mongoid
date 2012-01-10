@@ -8,7 +8,7 @@ module Mongoid #:nodoc:
       module Inflections
 
         ActiveSupport::Inflector.inflections do |inflect|
-          inflect.singular("address", "address")
+          inflect.singular(/address$/, "address")
           inflect.singular("addresses", "address")
           inflect.irregular("canvas", "canvases")
         end
@@ -18,7 +18,7 @@ module Mongoid #:nodoc:
         CHAR_CONV = {
           " " => "-",
           "!" => "-excl-",
-          "\"" => "-bckslsh-",
+          "\"" => "-dblquo-",
           "#" => "-hash-",
           "$" => "-dol-",
           "%" => "-perc-",
@@ -48,7 +48,7 @@ module Mongoid #:nodoc:
           "{" => "-ocurly-",
           "|" => "-pipe-",
           "}" => "-clcurly-",
-          "~" => "-tilda-"
+          "~" => "-tilde-"
         }
 
         REVERSALS = {

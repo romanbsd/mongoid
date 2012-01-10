@@ -62,13 +62,14 @@ module Mongoid # :nodoc:
       # @example Get the builder.
       #   metadata.builder(document)
       #
+      # @param [ Document ] base The base document.
       # @param [ Object ] object A document or attributes to give the builder.
       #
       # @return [ Builder ] The builder for the relation.
       #
       # @since 2.0.0.rc.1
-      def builder(object, loading = false)
-        relation.builder(self, object, loading)
+      def builder(base, object)
+        relation.builder(base, self, object)
       end
 
       # Returns the name of the strategy used for handling dependent relations.
@@ -89,6 +90,19 @@ module Mongoid # :nodoc:
         end
       end
 
+      # Is this an embedded relations that allows callbacks to cascade down to
+      # it?
+      #
+      # @example Does the relation have cascading callbacks?
+      #   metadata.cascading_callbacks?
+      #
+      # @return [ true, false ] If the relation cascades callbacks.
+      #
+      # @since 2.3.0
+      def cascading_callbacks?
+        !!self[:cascade_callbacks]
+      end
+
       # Returns the name of the class that this relation contains. If the
       # class_name was provided as an option this will return that, otherwise
       # it will determine the name from the name property.
@@ -100,7 +114,7 @@ module Mongoid # :nodoc:
       #
       # @since 2.0.0.rc.1
       def class_name
-        @class_name ||= (self[:class_name] || classify)
+        @class_name ||= (self[:class_name] || classify).sub(/^::/,"")
       end
 
       # Get the foreign key contraint for the metadata.
@@ -178,6 +192,20 @@ module Mongoid # :nodoc:
         !!dependent
       end
 
+      # Get the criteria needed to eager load this relation.
+      #
+      # @example Get the eager loading criteria.
+      #   metadata.eager_load(criteria)
+      #
+      # @param [ Array<Object> ] ids The ids of the returned parents.
+      #
+      # @return [ Criteria ] The eager loading criteria.
+      #
+      # @since 2.2.0
+      def eager_load(ids)
+        relation.eager_load(self, ids)
+      end
+
       # Will determine if the relation is an embedded one or not. Currently
       # only checks against embeds one and many.
       #
@@ -213,6 +241,19 @@ module Mongoid # :nodoc:
       # @since 2.0.0.rc.1
       def extension?
         !!extension
+      end
+
+      # Does this metadata have a forced nil inverse_of defined. (Used in many
+      # to manies)
+      #
+      # @example Is this a forced nil inverse?
+      #   metadata.forced_nil_inverse?
+      #
+      # @return [ true, false ] If inverse_of has been explicitly set to nil.
+      #
+      # @since 2.3.3
+      def forced_nil_inverse?
+        has_key?(:inverse_of) && inverse_of.nil?
       end
 
       # Handles all the logic for figuring out what the foreign_key is for each
@@ -334,7 +375,7 @@ module Mongoid # :nodoc:
       #
       # @since 2.0.0.rc.1
       def inverse(other = nil)
-        return self[:inverse_of] if inverse_of?
+        return self[:inverse_of] if has_key?(:inverse_of)
         return self[:as] || lookup_inverse(other) if polymorphic?
         @inverse ||= (cyclic? ? cyclic_inverse : inverse_relation)
       end
@@ -374,9 +415,7 @@ module Mongoid # :nodoc:
       #
       # @since 2.0.0.rc.1
       def inverse_foreign_key
-        @inverse_foreign_key ||=
-          ( inverse_of ? inverse_of.to_s.singularize : inverse_class_name.demodulize.underscore ) <<
-          relation.foreign_key_suffix
+        @inverse_foreign_key ||= determine_inverse_foreign_key
       end
 
       # Returns the inverse class of the proxied relation.
@@ -494,6 +533,18 @@ module Mongoid # :nodoc:
       # @since 2.0.0.rc.1
       def klass
         @klass ||= class_name.constantize
+      end
+
+      # Is this metadata representing a one to many or many to many relation?
+      #
+      # @example Is the relation a many?
+      #   metadata.many?
+      #
+      # @return [ true, false ] If the relation is a many.
+      #
+      # @since 2.1.6
+      def many?
+        @many ||= (relation.macro.to_s =~ /many/)
       end
 
       # Returns the macro for the relation of this metadata.
@@ -647,7 +698,11 @@ module Mongoid # :nodoc:
       #
       # @since 2.0.0.rc.1
       def validate?
-        self[:validate] != false
+        unless self[:validate].nil?
+          self[:validate]
+        else
+          self[:validate] = relation.validation_default
+        end
       end
 
       # Is this relation using Mongoid's internal versioning system?
@@ -730,7 +785,7 @@ module Mongoid # :nodoc:
       #
       # @since 2.0.0.rc.1
       def determine_cyclic_inverse
-        underscored = class_name.underscore
+        underscored = class_name.demodulize.underscore
         klass.relations.each_pair do |key, meta|
           if key =~ /#{underscored.singularize}|#{underscored.pluralize}/ &&
             meta.relation != relation
@@ -752,7 +807,7 @@ module Mongoid # :nodoc:
         return self[:foreign_key].to_s if self[:foreign_key]
         suffix = relation.foreign_key_suffix
         if relation.stores_foreign_key?
-          if relation.macro == :references_and_referenced_in_many
+          if relation.macro == :has_and_belongs_to_many
             "#{name.to_s.singularize}#{suffix}"
           else
             "#{name}#{suffix}"
@@ -763,6 +818,22 @@ module Mongoid # :nodoc:
           else
             inverse_of ? "#{inverse_of}#{suffix}" : inverse_class_name.foreign_key
           end
+        end
+      end
+
+      # Determine the inverse foreign key of the relation.
+      #
+      # @example Determine the inverse foreign key.
+      #   metadata.determine_inverse_foreign_key
+      #
+      # @return [ String ] The inverse.
+      #
+      # @since 2.3.2
+      def determine_inverse_foreign_key
+        if has_key?(:inverse_of)
+          inverse_of ? "#{inverse_of.to_s.singularize}#{relation.foreign_key_suffix}" : nil
+        else
+          "#{inverse_class_name.demodulize.underscore}#{relation.foreign_key_suffix}"
         end
       end
 
@@ -780,6 +851,7 @@ module Mongoid # :nodoc:
         default = klass.relations[inverse_klass.name.underscore]
         return default.name if default
         klass.relations.each_pair do |key, meta|
+          next if meta.versioned? || meta.name == name
           if meta.class_name == inverse_class_name
             return key.to_sym
           end

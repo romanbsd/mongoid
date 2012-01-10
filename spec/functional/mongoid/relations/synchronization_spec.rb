@@ -3,7 +3,30 @@ require "spec_helper"
 describe Mongoid::Relations::Synchronization do
 
   before do
-    [ Person, Preference ].each(&:delete_all)
+    [ Person, Preference, Article, Tag ].each(&:delete_all)
+  end
+
+  context "when the inverse of is nil" do
+
+    let(:preference) do
+      Preference.new(:name => "test")
+    end
+
+    let(:article) do
+      Article.new
+    end
+
+    before do
+      article.preferences << preference
+    end
+
+    it "does not attempt synchronization" do
+      expect { article.save }.to_not raise_error(TypeError)
+    end
+
+    it "sets the one side of the relation" do
+      article.preferences.should eq([ preference ])
+    end
   end
 
   context "when first setting by the relation itself" do
@@ -278,7 +301,7 @@ describe Mongoid::Relations::Synchronization do
     end
   end
 
-  context "when destroying the document" do
+  context "when destroying" do
 
     let!(:one) do
       Preference.create(:name => "one")
@@ -291,20 +314,62 @@ describe Mongoid::Relations::Synchronization do
     let!(:person) do
       Person.create(
         :ssn => "342-12-2222",
-        :preference_ids => [ one.id, two.id ]
+        :preferences => [ one, two ]
       )
     end
 
+    context "when destroying the parent" do
+
+      before do
+        person.destroy
+      end
+
+      it "removes the first inverse key" do
+        one.reload.person_ids.should be_empty
+      end
+
+      it "removes the second inverse key" do
+        two.reload.person_ids.should be_empty
+      end
+    end
+
+    context "when destroying the child" do
+
+      before do
+        one.destroy
+      end
+
+      it "removes the inverse key" do
+        person.reload.preference_ids.should eq([ two.id ])
+      end
+    end
+  end
+
+  context "when appending an existing document to a new one" do
+
+    let!(:peristed) do
+      Tag.create
+    end
+
+    let(:article) do
+      Article.new
+    end
+
     before do
-      person.destroy
+      article.tags << Tag.first
+      article.save
     end
 
-    it "removes the first inverse key" do
-      one.reload.person_ids.should be_empty
+    let(:tag) do
+      Tag.first
     end
 
-    it "removes the second inverse key" do
-      two.reload.person_ids.should be_empty
+    it "persists the foreign key on the inverse" do
+      tag.article_ids.should eq([ article.id ])
+    end
+
+    it "persists the inverse relation" do
+      tag.articles.should eq([ article ])
     end
   end
 end

@@ -1,6 +1,7 @@
 # encoding: utf-8
 require "mongoid/validations/associated"
 require "mongoid/validations/uniqueness"
+require "mongoid/validations/presence"
 
 module Mongoid #:nodoc:
 
@@ -10,7 +11,25 @@ module Mongoid #:nodoc:
     extend ActiveSupport::Concern
     include ActiveModel::Validations
 
-    attr_accessor :validated
+    # Begin the associated validation.
+    #
+    # @example Begin validation.
+    #   document.begin_validate
+    #
+    # @since 2.1.9
+    def begin_validate
+      Threaded.begin_validate(self)
+    end
+
+    # Exit the associated validation.
+    #
+    # @example Exit validation.
+    #   document.exit_validate
+    #
+    # @since 2.1.9
+    def exit_validate
+      Threaded.exit_validate(self)
+    end
 
     # Overrides the default ActiveModel behaviour since we need to handle
     # validations of relations slightly different than just calling the
@@ -25,9 +44,14 @@ module Mongoid #:nodoc:
     #
     # @since 2.0.0.rc.1
     def read_attribute_for_validation(attr)
-      if relations[attr.to_s]
+      attribute = attr.to_s
+      if relations[attribute]
+        begin_validate
         relation = send(attr)
-        relation ? relation.in_memory : nil
+        exit_validate
+        relation.do_or_do_not(:in_memory) || relation
+      elsif fields[attribute] && fields[attribute].localized?
+        attributes[attribute]
       else
         send(attr)
       end
@@ -47,7 +71,7 @@ module Mongoid #:nodoc:
     #
     # @since 2.0.0.rc.6
     def valid?(context = nil)
-      super context ? context : (new? ? :create : :update)
+      super context ? context : (new_record? ? :create : :update)
     end
 
     # Used to prevent infinite loops in associated validations.
@@ -59,7 +83,7 @@ module Mongoid #:nodoc:
     #
     # @since 2.0.0.rc.2
     def validated?
-      !!@validated
+      Threaded.validated?(self)
     end
 
     module ClassMethods #:nodoc:
@@ -97,6 +121,23 @@ module Mongoid #:nodoc:
       # @param [ Array ] *args The arguments to pass to the validator.
       def validates_uniqueness_of(*args)
         validates_with(UniquenessValidator, _merge_attributes(args))
+      end
+
+      # Validates whether or not a field is present - meaning nil or empty.
+      #
+      # @example
+      #   class Person
+      #     include Mongoid::Document
+      #     field :title
+      #
+      #     validates_presence_of :title
+      #   end
+      #
+      # @param [ Array ] args The names of the fields to validate.
+      #
+      # @since 2.4.0
+      def validates_presence_of(*args)
+        validates_with(PresenceValidator, _merge_attributes(args))
       end
 
       protected

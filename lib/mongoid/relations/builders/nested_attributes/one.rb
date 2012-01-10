@@ -22,7 +22,7 @@ module Mongoid # :nodoc:
           #
           # parent: The parent document of the relation.
           def build(parent)
-            return if reject?(attributes)
+            return if reject?(parent, attributes)
             @existing = parent.send(metadata.name)
             if update?
               existing.attributes = attributes
@@ -69,7 +69,7 @@ module Mongoid # :nodoc:
           #
           # True if the id part of the logic will allow an update.
           def acceptable_id?
-            id = convert_id(attributes[:id])
+            id = convert_id(existing.class, attributes[:id])
             existing.id == id || id.nil? || (existing.id != id && update_only?)
           end
 

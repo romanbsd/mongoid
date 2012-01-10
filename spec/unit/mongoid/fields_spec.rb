@@ -2,13 +2,6 @@ require "spec_helper"
 
 describe Mongoid::Fields do
 
-  describe ".defaults" do
-
-    it "returns a hash of all the default values" do
-      Game.defaults.should == { "high_score" => 500, "score" => 0 }
-    end
-  end
-
   describe "#defaults" do
 
     context "with defaults specified as a non-primitive" do
@@ -29,6 +22,7 @@ describe Mongoid::Fields do
 
         after do
           Person.fields.delete("array_testing")
+          Person.pre_processed_defaults.delete_one("array_testing")
         end
 
         it "returns an equal object of a different instance" do
@@ -52,6 +46,51 @@ describe Mongoid::Fields do
             person_two.hash_testing.object_id
         end
       end
+
+      context "when provided a default proc" do
+
+        context "when the proc has no argument" do
+
+          before do
+            Person.field(
+              :generated_testing,
+              :type => Float,
+              :default => lambda { Time.now.to_f }
+            )
+          end
+
+          after do
+            Person.fields.delete("generated_testing")
+            Person.pre_processed_defaults.delete_one("generated_testing")
+          end
+
+          it "returns an equal object of a different instance" do
+            person_one.generated_testing.object_id.should_not eq(
+              person_two.generated_testing.object_id
+            )
+          end
+        end
+
+        context "when the proc has to be evaluated on the document" do
+
+          before do
+            Person.field(
+              :rank,
+              :type => Integer,
+              :default => lambda { title? ? 1 : 2 }
+            )
+          end
+
+          after do
+            Person.fields.delete("rank")
+            Person.post_processed_defaults.delete_one("rank")
+          end
+
+          it "yields the document to the proc" do
+            Person.new.rank.should eq(2)
+          end
+        end
+      end
     end
 
     context "on parent classes" do
@@ -61,7 +100,7 @@ describe Mongoid::Fields do
       end
 
       it "does not return subclass defaults" do
-        shape.defaults.should == { "x" => 0, "y" => 0 }
+        shape.pre_processed_defaults.should eq([ "_id", "x", "y" ])
       end
     end
 
@@ -72,7 +111,7 @@ describe Mongoid::Fields do
       end
 
       it "has the parent and child defaults" do
-        circle.defaults.should == { "x" => 0, "y" => 0, "radius" => 0 }
+        circle.pre_processed_defaults.should eq([ "_id", "x", "y", "radius" ])
       end
     end
   end
@@ -81,6 +120,18 @@ describe Mongoid::Fields do
 
     it "returns the generated field" do
       Person.field(:testing).should equal Person.fields["testing"]
+    end
+
+    context "when the field name conflicts with mongoid's internals" do
+
+      context "when the field is named metadata" do
+
+        it "raises an error" do
+          expect {
+            Person.field(:metadata)
+          }.to raise_error(Mongoid::Errors::InvalidField)
+        end
+      end
     end
 
     context "when the field is a time" do
@@ -192,6 +243,72 @@ describe Mongoid::Fields do
         person.expects(:read_attribute).with("aliased")
         person.alias?
       end
+
+      it "uses the name to write the attribute" do
+        person.expects(:write_attribute).with("aliased", true)
+        person.aliased = true
+      end
+
+      it "uses the name to read the attribute" do
+        person.expects(:read_attribute).with("aliased")
+        person.aliased
+      end
+
+      it "uses the name for the query method" do
+        person.expects(:read_attribute).with("aliased")
+        person.aliased?
+      end
+
+      it "creates dirty methods for the name" do
+        person.should respond_to(:aliased_changed?)
+      end
+
+      it "creates dirty methods for the alias" do
+        person.should respond_to(:alias_changed?)
+      end
+
+      context "when changing the name" do
+
+        before do
+          person.aliased = true
+        end
+
+        it "sets name_changed?" do
+          person.aliased_changed?.should be
+        end
+
+        it "sets alias_changed?" do
+          person.alias_changed?.should be
+        end
+
+      end
+
+      context "when changing the alias" do
+
+        before do
+          person.alias = true
+        end
+
+        it "sets name_changed?" do
+          person.aliased_changed?.should be
+        end
+
+        it "sets alias_changed?" do
+          person.alias_changed?.should be
+        end
+
+      end
+
+      context "when defining a criteria" do
+
+        let(:criteria) do
+          Person.where(:alias => "true")
+        end
+
+        it "properly serializes the aliased field" do
+          criteria.selector.should eq({ :alias => true })
+        end
+      end
     end
 
     context "custom options" do
@@ -208,18 +325,18 @@ describe Mongoid::Fields do
 
         it "calls the handler with the model" do
           handler.expects(:call).with do |model,_,_|
-            model.should eql Person
+            model.should eql User
           end
 
-          Person.field :custom, :option => true
+          User.field :custom, :option => true
         end
 
         it "calls the handler with the field" do
           handler.expects(:call).with do |_,field,_|
-            field.should eql Person.fields["custom"]
+            field.should eql User.fields["custom"]
           end
 
-          Person.field :custom, :option => true
+          User.field :custom, :option => true
         end
 
         it "calls the handler with the option value" do
@@ -227,7 +344,7 @@ describe Mongoid::Fields do
             value.should eql true
           end
 
-          Person.field :custom, :option => true
+          User.field :custom, :option => true
         end
       end
 
@@ -235,7 +352,7 @@ describe Mongoid::Fields do
 
         it "calls the handler" do
           handler.expects(:call)
-          Person.field :custom, :option => nil
+          User.field :custom, :option => nil
         end
       end
 
@@ -244,7 +361,7 @@ describe Mongoid::Fields do
         it "does not call the handler" do
           handler.expects(:call).never
 
-          Person.field :custom
+          User.field :custom
         end
       end
     end
@@ -284,6 +401,91 @@ describe Mongoid::Fields do
     end
   end
 
+  describe ".object_id_field?" do
+
+    context "when the field exists" do
+
+      context "when the field is of type BSON::ObjectId" do
+
+        context "when the field is the _id" do
+
+          it "returns true" do
+            Person.object_id_field?(:_id).should be_true
+          end
+        end
+
+        context "when the field is a single foreign key" do
+
+          context "when the relation is not polymorphic" do
+
+            it "returns true" do
+              Post.object_id_field?(:person_id).should be_true
+            end
+          end
+
+          context "when the relation is polymorphic" do
+
+            it "returns true" do
+              Rating.object_id_field?(:ratable_id).should be_true
+            end
+          end
+        end
+
+        context "when the field is a multi foreign key" do
+
+          it "returns true" do
+            Person.object_id_field?(:preference_ids).should be_true
+          end
+        end
+
+        context "when the field is not a foreign key" do
+
+          it "returns true" do
+            Person.object_id_field?(:bson_id).should be_true
+          end
+        end
+      end
+
+      context "when the field is not an object id" do
+
+        context "when the field is an id" do
+
+          it "returns false" do
+            Address.object_id_field?(:_id).should be_false
+          end
+        end
+
+        context "when the field is a normal field" do
+
+          it "returns false" do
+            Person.object_id_field?(:title).should be_false
+          end
+        end
+
+        context "when the field is a single foreign key" do
+
+          it "returns true" do
+            Alert.object_id_field?(:account_id).should be_false
+          end
+        end
+
+        context "when the field is a multi foreign key" do
+
+          it "returns false" do
+            Agent.object_id_field?(:account_ids).should be_false
+          end
+        end
+      end
+    end
+
+    context "when the field does not exist" do
+
+      it "returns false" do
+        Person.object_id_field?(:some_random_name).should be_false
+      end
+    end
+  end
+
   describe ".replace_field" do
 
     let!(:original) do
@@ -308,6 +510,35 @@ describe Mongoid::Fields do
 
     it "keeps the options from the old field" do
       new_field.options[:label].should == "id"
+    end
+  end
+
+  context "when sending an include of another module at runtime" do
+
+    before do
+      Basic.send(:include, Ownable)
+    end
+
+    context "when the class is a parent" do
+
+      let(:fields) do
+        Basic.fields
+      end
+
+      it "resets the fields" do
+        fields.keys.should include("user_id")
+      end
+    end
+
+    context "when the class is a subclass" do
+
+      let(:fields) do
+        SubBasic.fields
+      end
+
+      it "resets the fields" do
+        fields.keys.should include("user_id")
+      end
     end
   end
 end

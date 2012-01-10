@@ -2,7 +2,15 @@ require "spec_helper"
 
 describe Mongoid::Relations::Builders::Referenced::Many do
 
+  let(:base) do
+    stub
+  end
+
   describe "#build" do
+
+    let(:criteria) do
+      stub(:klass => Post, :selector => { "person_id" => "" })
+    end
 
     let(:metadata) do
       stub_everything(
@@ -10,12 +18,12 @@ describe Mongoid::Relations::Builders::Referenced::Many do
         :name => :posts,
         :foreign_key => "person_id",
         :inverse_klass => Person,
-        :criteria => [ post ]
+        :criteria => criteria
       )
     end
 
     let(:builder) do
-      described_class.new(metadata, object)
+      described_class.new(base, metadata, object)
     end
 
     context "when provided an id" do
@@ -37,7 +45,7 @@ describe Mongoid::Relations::Builders::Referenced::Many do
       end
 
       it "sets the documents" do
-        @documents.should == [ post ]
+        @documents.should eq(criteria)
       end
     end
 
@@ -50,7 +58,7 @@ describe Mongoid::Relations::Builders::Referenced::Many do
           :foreign_key => "person_id",
           :inverse_klass => Person,
           :order => :rating.asc,
-          :criteria => [ post ]
+          :criteria => criteria
         )
       end
 
@@ -71,7 +79,7 @@ describe Mongoid::Relations::Builders::Referenced::Many do
       end
 
       it "ordered by specified filed" do
-        @documents.should == [ post ]
+        @documents.should eq(criteria)
       end
     end
 

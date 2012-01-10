@@ -32,21 +32,21 @@ module Mongoid # :nodoc:
     module Builders
       extend ActiveSupport::Concern
 
-      # Execute a block in building mode.
+      private
+
+      # Parse out the attributes and the options from the args passed to a
+      # build_ or create_ methods.
       #
-      # @example Execute in building mode.
-      #   building do
-      #     relation.push(doc)
-      #   end
+      # @example Parse the args.
+      #   doc.parse_args(:name => "Joe")
       #
-      # @return [ Object ] The return value of the block.
+      # @param [ Array ] args The arguments.
       #
-      # @since 2.1.0
-      def building
-        Threaded.building = true
-        yield
-      ensure
-        Threaded.building = false
+      # @return [ Array<Hash> ] The attributes and options.
+      #
+      # @since 2.3.4
+      def parse_args(*args)
+        [ args.first || {}, args.size > 1 ? args[1] : {} ]
       end
 
       module ClassMethods #:nodoc:
@@ -65,9 +65,10 @@ module Mongoid # :nodoc:
         def builder(name, metadata)
           tap do
             define_method("build_#{name}") do |*args|
-              document = Factory.build(metadata.klass, args.first || {})
-              building do
-                send("#{name}=", document)
+              attributes, options = parse_args(*args)
+              document = Factory.build(metadata.klass, attributes, options)
+              _building do
+                send("#{name}=", document).tap {|child| child.run_callbacks(:build) }
               end
             end
           end
@@ -85,10 +86,12 @@ module Mongoid # :nodoc:
         # @return [ Class ] The class being set up.
         #
         # @since 2.0.0.rc.1
-        def creator(name)
+        def creator(name, metadata)
           tap do
             define_method("create_#{name}") do |*args|
-              send("build_#{name}", *args).tap { |doc| doc.save }
+              attributes, options = parse_args(*args)
+              document = Factory.build(metadata.klass, attributes, options)
+              send("#{name}=", document).tap { |doc| doc.save }
             end
           end
         end

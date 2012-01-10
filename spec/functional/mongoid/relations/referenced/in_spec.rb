@@ -3,40 +3,37 @@ require "spec_helper"
 describe Mongoid::Relations::Referenced::In do
 
   before do
-    [ Person, Game, Post, Bar, Agent, Comment, Movie, Account ].map(&:delete_all)
+    [ Person, Game, Post, Bar, Agent,
+      Comment, Movie, Account, User, Book,
+      Series, Cookie, Jar ].map(&:delete_all)
   end
 
   let(:person) do
     Person.create(:ssn => "555-55-1111")
   end
 
-  context "when the document belongs to a has one and has many" do
-
-    let(:movie) do
-      Movie.create(:name => "Infernal Affairs")
-    end
-
-    let(:account) do
-      Account.create(:name => "Leung")
-    end
-
-    context "when creating the document" do
-
-      let(:comment) do
-        Comment.create(:movie => movie, :account => account)
-      end
-
-      it "sets the correct has one" do
-        comment.account.should eq(account)
-      end
-
-      it "sets the correct has many" do
-        comment.movie.should eq(movie)
-      end
-    end
-  end
-
   describe "#=" do
+
+    context "when the relation is named target" do
+
+      let(:target) do
+        User.new
+      end
+
+      context "when the relation is referenced from an embeds many" do
+
+        context "when setting via create" do
+
+          let(:service) do
+            person.services.create(:target => target)
+          end
+
+          it "sets the target relation" do
+            service.target.should eq(target)
+          end
+        end
+      end
+    end
 
     context "when the inverse relation has no reference defined" do
 
@@ -629,6 +626,294 @@ describe Mongoid::Relations::Referenced::In do
           end
         end
       end
+    end
+  end
+
+  describe ".eager_load" do
+
+    before do
+      Mongoid.identity_map_enabled = true
+    end
+
+    after do
+      Mongoid.identity_map_enabled = false
+    end
+
+    context "when the relation is not polymorphic" do
+
+      let!(:person) do
+        Person.create(:ssn => "243-12-5243")
+      end
+
+      let!(:post) do
+        person.posts.create(:title => "testing")
+      end
+
+      let(:metadata) do
+        Post.relations["person"]
+      end
+
+      let(:eager) do
+        described_class.eager_load(metadata, Post.all)
+      end
+
+      let!(:map) do
+        Mongoid::IdentityMap.get(Person, person.id)
+      end
+
+      it "puts the document in the identity map" do
+        map.should eq(person)
+      end
+    end
+
+    context "when the relation is polymorphic" do
+
+      let(:metadata) do
+        Rating.relations["ratable"]
+      end
+
+      it "raises an error" do
+        expect {
+          described_class.eager_load(metadata, Rating.all)
+        }.to raise_error(Mongoid::Errors::EagerLoad)
+      end
+    end
+  end
+
+  context "when the relation is self referencing" do
+
+    let(:game_one) do
+      Game.new(:name => "Diablo")
+    end
+
+    let(:game_two) do
+      Game.new(:name => "Warcraft")
+    end
+
+    context "when setting the parent" do
+
+      before do
+        game_one.parent = game_two
+      end
+
+      it "sets the parent" do
+        game_one.parent.should eq(game_two)
+      end
+
+      it "does not set the parent recursively" do
+        game_two.parent.should be_nil
+      end
+    end
+  end
+
+  context "when replacing the relation with another" do
+
+    let!(:person) do
+      Person.create(:ssn => "321-99-8888")
+    end
+
+    let!(:post) do
+      Post.create(:title => "test")
+    end
+
+    let!(:game) do
+      person.create_game(:name => "Tron")
+    end
+
+    before do
+      post.person = game.person
+      post.save
+    end
+
+    it "clones the relation" do
+      post.person.should eq(person)
+    end
+
+    it "sets the foreign key" do
+      post.person_id.should eq(person.id)
+    end
+
+    it "does not remove the previous relation" do
+      game.person.should eq(person)
+    end
+
+    it "does not remove the previous foreign key" do
+      game.person_id.should eq(person.id)
+    end
+
+    context "when reloading" do
+
+      before do
+        post.reload
+        game.reload
+      end
+
+      it "persists the relation" do
+        post.reload.person.should eq(person)
+      end
+
+      it "persists the foreign key" do
+        post.reload.person_id.should eq(game.person_id)
+      end
+
+      it "does not remove the previous relation" do
+        game.person.should eq(person)
+      end
+
+      it "does not remove the previous foreign key" do
+        game.person_id.should eq(person.id)
+      end
+    end
+  end
+
+  context "when the document belongs to a has one and has many" do
+
+    let(:movie) do
+      Movie.create(:name => "Infernal Affairs")
+    end
+
+    let(:account) do
+      Account.create(:name => "Leung")
+    end
+
+    context "when creating the document" do
+
+      let(:comment) do
+        Comment.create(:movie => movie, :account => account)
+      end
+
+      it "sets the correct has one" do
+        comment.account.should eq(account)
+      end
+
+      it "sets the correct has many" do
+        comment.movie.should eq(movie)
+      end
+    end
+  end
+
+  context "when reloading the relation" do
+
+    let!(:person_one) do
+      Person.create(:ssn => "243-41-9678", :title => "Mr.")
+    end
+
+    let!(:person_two) do
+      Person.create(:ssn => "243-41-9699", :title => "Sir")
+    end
+
+    let!(:game) do
+      Game.create(:name => "Starcraft 2")
+    end
+
+    before do
+      game.person = person_one
+      game.save
+    end
+
+    context "when the relation references the same document" do
+
+      before do
+        Person.collection.update(
+          { :_id => person_one.id }, { "$set" => { :title => "Madam" }}
+        )
+      end
+
+      let(:reloaded) do
+        game.person(true)
+      end
+
+      it "reloads the document from the database" do
+        reloaded.title.should eq("Madam")
+      end
+
+      it "sets a new document instance" do
+        reloaded.should_not equal(person_one)
+      end
+    end
+
+    context "when the relation references a different document" do
+
+      before do
+        game.person_id = person_two.id
+        game.save
+      end
+
+      let(:reloaded) do
+        game.person(true)
+      end
+
+      it "reloads the new document from the database" do
+        reloaded.title.should eq("Sir")
+      end
+
+      it "sets a new document instance" do
+        reloaded.should_not equal(person_one)
+      end
+    end
+  end
+
+  context "when the parent and child are persisted" do
+
+    context "when the identity map is enabled" do
+
+      before do
+        Mongoid.identity_map_enabled = true
+      end
+
+      after do
+        Mongoid.identity_map_enabled = false
+      end
+
+      let(:series) do
+        Series.create
+      end
+
+      let!(:book_one) do
+        series.books.create
+      end
+
+      let!(:book_two) do
+        series.books.create
+      end
+
+      let(:id) do
+        Book.first.id
+      end
+
+      context "when asking for the inverse multiple times" do
+
+        before do
+          Book.find(id).series.books.to_a
+        end
+
+        it "does not append and save duplicate docs" do
+          Book.find(id).series.books.to_a.length.should eq(2)
+        end
+
+        it "returns the same documents from the map" do
+          Book.find(id).should equal(Book.find(id))
+        end
+      end
+    end
+  end
+
+  context "when creating with a reference to an integer id parent" do
+
+    let!(:jar) do
+      Jar.create(:_id => 1)
+    end
+
+    let(:cookie) do
+      Cookie.create(:jar_id => "1")
+    end
+
+    it "allows strings to be passed as the id" do
+      cookie.jar.should eq(jar)
+    end
+
+    it "persists the relation" do
+      cookie.reload.jar.should eq(jar)
     end
   end
 end

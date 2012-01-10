@@ -12,11 +12,16 @@ module Mongoid #:nodoc:
     #
     # @param [ Class ] klass The class to instantiate from if _type is not present.
     # @param [ Hash ] attributes The document attributes.
+    # @param [ Hash ] optiosn The mass assignment scoping options.
     #
     # @return [ Document ] The instantiated document.
-    def build(klass, attributes = {})
+    def build(klass, attributes = {}, options = {})
       type = (attributes || {})["_type"]
-      (type && klass._types.include?(type)) ? type.constantize.new(attributes) : klass.new(attributes)
+      if type && klass._types.include?(type)
+        type.constantize.new(attributes, options)
+      else
+        klass.new(attributes, options)
+      end
     end
 
     # Builds a new +Document+ from the supplied attributes loaded from the
@@ -31,7 +36,11 @@ module Mongoid #:nodoc:
     # @return [ Document ] The instantiated document.
     def from_db(klass, attributes = {})
       type = attributes["_type"]
-      type.blank? ? klass.instantiate(attributes) : type.constantize.instantiate(attributes)
+      if type.blank?
+        klass.instantiate(attributes)
+      else
+        type.camelize.constantize.instantiate(attributes)
+      end
     end
   end
 end

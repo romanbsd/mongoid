@@ -7,7 +7,7 @@ module Mongoid #:nodoc
     module Mappings
       extend self
 
-      MODULE = "Mongoid::Fields::Serializable"
+      MODULE = "Mongoid::Fields::Internal"
 
       # Get the custom field type for the provided class used in the field
       # definition.
@@ -21,12 +21,17 @@ module Mongoid #:nodoc
       #
       # @since 2.1.0
       def for(klass, foreign_key = false)
-        return Serializable::Object unless klass
+        return Internal::Object unless klass
         if foreign_key
           return "#{MODULE}::ForeignKeys::#{klass.to_s.demodulize}".constantize
         end
         begin
-          "#{MODULE}::#{klass.to_s.demodulize}".constantize
+          modules = "#{ MODULE }::|BSON::|ActiveSupport::"
+          if match = klass.to_s.match(Regexp.new("^(#{ modules })?(\\w+)$"))
+            "#{MODULE}::#{ match[2] }".constantize
+          else
+            klass.to_s.constantize
+          end
         rescue NameError
           klass
         end

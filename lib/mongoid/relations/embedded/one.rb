@@ -36,7 +36,11 @@ module Mongoid # :nodoc:
         # @since 2.0.0.rc.1
         def substitute(replacement)
           tap do |proxy|
-            proxy.delete
+            if _assigning?
+              base.atomic_unsets.push(proxy.atomic_path)
+            else
+              proxy.delete if persistable?
+            end
             proxy.unbind_one
             return nil unless replacement
             proxy.target = replacement
@@ -69,7 +73,7 @@ module Mongoid # :nodoc:
         #
         # @since 2.1.0
         def persistable?
-          base.persisted? && !binding? && !building?
+          base.persisted? && !_binding? && !_building? && !_assigning?
         end
 
         class << self
@@ -80,14 +84,15 @@ module Mongoid # :nodoc:
           # @example Get the builder.
           #   Embedded::One.builder(meta, object, person)
           #
+          # @param [ Document ] base The base document.
           # @param [ Metadata ] meta The metadata of the relation.
           # @param [ Document, Hash ] object A document or attributes to build with.
           #
           # @return [ Builder ] A newly instantiated builder object.
           #
           # @since 2.0.0.rc.1
-          def builder(meta, object, loading = false)
-            Builders::Embedded::One.new(meta, object, loading)
+          def builder(base, meta, object)
+            Builders::Embedded::One.new(base, meta, object)
           end
 
           # Returns true if the relation is an embedded one. In this case
@@ -179,7 +184,20 @@ module Mongoid # :nodoc:
           #
           # @since 2.1.0
           def valid_options
-            [ :as, :cyclic ]
+            [ :as, :cascade_callbacks, :cyclic ]
+          end
+
+          # Get the default validation setting for the relation. Determines if
+          # by default a validates associated will occur.
+          #
+          # @example Get the validation default.
+          #   Proxy.validation_default
+          #
+          # @return [ true, false ] The validation default.
+          #
+          # @since 2.1.9
+          def validation_default
+            true
           end
         end
       end

@@ -48,9 +48,10 @@ module Mongoid #:nodoc:
           "mod",
           "ne",
           "near",
+          "not",
           "nin",
-          "size",
           "within",
+          ["count", "size"],
           ["matches","elemMatch"] ].each do |oper|
           m, oper = oper
           oper = m unless oper

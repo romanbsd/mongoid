@@ -21,7 +21,7 @@ describe Mongoid::Fields::Mappings do
         end
 
         it "returns the standard definable field" do
-          definable.should eq(Mongoid::Fields::Serializable::ForeignKeys::Array)
+          definable.should eq(Mongoid::Fields::Internal::ForeignKeys::Array)
         end
       end
 
@@ -32,7 +32,7 @@ describe Mongoid::Fields::Mappings do
         end
 
         it "returns the standard definable field" do
-          definable.should eq(Mongoid::Fields::Serializable::Array)
+          definable.should eq(Mongoid::Fields::Internal::Array)
         end
       end
     end
@@ -44,7 +44,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::BigDecimal)
+        definable.should eq(Mongoid::Fields::Internal::BigDecimal)
       end
     end
 
@@ -55,7 +55,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::Binary)
+        definable.should eq(Mongoid::Fields::Internal::Binary)
       end
     end
 
@@ -66,7 +66,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::Boolean)
+        definable.should eq(Mongoid::Fields::Internal::Boolean)
       end
     end
 
@@ -77,7 +77,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::DateTime)
+        definable.should eq(Mongoid::Fields::Internal::DateTime)
       end
     end
 
@@ -88,7 +88,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::Date)
+        definable.should eq(Mongoid::Fields::Internal::Date)
       end
     end
 
@@ -99,7 +99,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::Float)
+        definable.should eq(Mongoid::Fields::Internal::Float)
       end
     end
 
@@ -110,7 +110,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::Hash)
+        definable.should eq(Mongoid::Fields::Internal::Hash)
       end
     end
 
@@ -121,7 +121,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::Integer)
+        definable.should eq(Mongoid::Fields::Internal::Integer)
       end
     end
 
@@ -132,7 +132,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::Object)
+        definable.should eq(Mongoid::Fields::Internal::Object)
       end
     end
 
@@ -143,7 +143,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::ObjectId)
+        definable.should eq(Mongoid::Fields::Internal::ObjectId)
       end
     end
 
@@ -154,7 +154,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::Range)
+        definable.should eq(Mongoid::Fields::Internal::Range)
       end
     end
 
@@ -165,7 +165,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::Set)
+        definable.should eq(Mongoid::Fields::Internal::Set)
       end
     end
 
@@ -176,7 +176,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::String)
+        definable.should eq(Mongoid::Fields::Internal::String)
       end
     end
 
@@ -187,7 +187,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::Symbol)
+        definable.should eq(Mongoid::Fields::Internal::Symbol)
       end
     end
 
@@ -198,7 +198,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::Time)
+        definable.should eq(Mongoid::Fields::Internal::Time)
       end
     end
 
@@ -209,18 +209,57 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the standard definable field" do
-        definable.should eq(Mongoid::Fields::Serializable::TimeWithZone)
+        definable.should eq(Mongoid::Fields::Internal::TimeWithZone)
       end
     end
 
     context "when given a custom type" do
 
-      let(:klass) do
-        Person
+      context "without a module" do
+
+        let(:klass) do
+          Person
+        end
+
+        it "returns the class of the custom type" do
+          definable.should eq(Person)
+        end
       end
 
-      it "returns the class of the custom type" do
-        definable.should eq(Person)
+      context "with a module" do
+
+        context "and a class not matching a defined serializable" do
+
+          let(:klass) do
+            Custom::Type
+          end
+
+          it "returns the module and class of the custom type" do
+            definable.should eq(Custom::Type)
+          end
+        end
+
+        context "and a class matching a defined serializable" do
+
+          let(:klass) do
+            Custom::String
+          end
+
+          it "returns the module and class of the custom type" do
+            definable.should eq(Custom::String)
+          end
+        end
+
+        context "inside the Mongoid namespace" do
+
+          let(:klass) do
+            Mongoid::MyExtension::Object
+          end
+
+          it "returns the module and class of the custom type" do
+            definable.should eq(Mongoid::MyExtension::Object)
+          end
+        end
       end
     end
 
@@ -231,7 +270,7 @@ describe Mongoid::Fields::Mappings do
       end
 
       it "returns the object standard type" do
-        definable.should eq(Mongoid::Fields::Serializable::Object)
+        definable.should eq(Mongoid::Fields::Internal::Object)
       end
     end
   end

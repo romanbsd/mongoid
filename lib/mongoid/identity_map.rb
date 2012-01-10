@@ -10,31 +10,14 @@ module Mongoid #:nodoc:
     #   map.get(Person, id)
     #
     # @param [ Class ] klass The class of the document.
-    # @param [ Object ] id The document id.
+    # @param [ Object, Hash ] idenfier The document id or selector.
     #
     # @return [ Document ] The matching document.
     #
     # @since 2.1.0
-    def get(klass, id)
-      return nil unless Mongoid.identity_map_enabled?
-      documents_for(klass)[id]
-    end
-
-    # Get a single document that matches the provided criteria.
-    #
-    # @example Get the document for the criteria.
-    #   map.match(Person.where(:_id => id))
-    #
-    # @param [ Criteria ] criteria The criteria to match.
-    #
-    # @return [ Document ] The first matching document.
-    #
-    # @since 2.1.0
-    def match(criteria)
-      return nil unless Mongoid.identity_map_enabled?
-      documents_for(criteria.klass).values.detect do |doc|
-        doc.matches?(criteria.selector)
-      end
+    def get(klass, identifier)
+      return nil unless Mongoid.identity_map_enabled? && klass
+      documents_for(klass)[identifier]
     end
 
     # Remove the document from the identity map.
@@ -67,6 +50,36 @@ module Mongoid #:nodoc:
       documents_for(document.class)[document.id] = document
     end
 
+    # Set a document in the identity map for the provided selector.
+    #
+    # @example Set the document in the map.
+    #   identity_map.set_selector(document, { :person_id => person.id })
+    #
+    # @param [ Document ] document The document to set.
+    # @param [ Hash ] selector The selector to identify it.
+    #
+    # @return [ Array<Document> ] The documents.
+    #
+    # @since 2.2.0
+    def set_many(document, selector)
+      (documents_for(document.class)[selector] ||= []).push(document)
+    end
+
+    # Set a document in the identity map for the provided selector.
+    #
+    # @example Set the document in the map.
+    #   identity_map.set_selector(document, { :person_id => person.id })
+    #
+    # @param [ Document ] document The document to set.
+    # @param [ Hash ] selector The selector to identify it.
+    #
+    # @return [ Document ] The matching document.
+    #
+    # @since 2.2.0
+    def set_one(document, selector)
+     documents_for(document.class)[selector] = document
+    end
+
     private
 
     # Get the documents in the identity map for a specific class.
@@ -80,7 +93,8 @@ module Mongoid #:nodoc:
     #
     # @since 2.1.0
     def documents_for(klass)
-      self[klass] ||= {}
+      return nil unless klass
+      self[klass.collection_name] ||= {}
     end
 
     class << self

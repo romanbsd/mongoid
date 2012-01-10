@@ -3,7 +3,7 @@ require "spec_helper"
 describe Mongoid::Persistence do
 
   before do
-    [ Person, Post, Game ].each(&:delete_all)
+    [ Account, Person, Post, Product, Game ].each(&:delete_all)
   end
 
   before(:all) do
@@ -51,11 +51,84 @@ describe Mongoid::Persistence do
       end
 
       it "sets the attributes" do
-        person.ssn.should == "666-66-6666"
+        person.ssn.should eq("666-66-6666")
       end
 
       it "persists the document" do
         person.should be_persisted
+      end
+    end
+
+    context "when mass assignment role is indicated" do
+
+      context "when attributes assigned from default role" do
+
+        let(:item) do
+          Item.create(
+            :title => "Some Title",
+            :is_rss => true,
+            :user_login => "SomeLogin"
+          )
+        end
+
+        it "sets the field for the default role" do
+          item.is_rss.should be_true
+        end
+
+        it "does not set the field for non default role title" do
+          item.title.should be_nil
+        end
+
+        it "does not set the field for non default role user login" do
+          item.user_login.should be_nil
+        end
+      end
+
+      context "when attributes assigned from parser role" do
+
+        let(:item) do
+          Item.create(
+            { :title => "Some Title",
+              :is_rss => true,
+              :user_login => "SomeLogin" }, :as => :parser
+          )
+        end
+
+        it "sets the user login field for parser role" do
+          item.user_login.should eq("SomeLogin")
+        end
+
+        it "sets the is rss field for parse role" do
+          item.is_rss.should eq(false)
+        end
+
+        it "does not set the title field" do
+          item.title.should be_nil
+        end
+      end
+
+      context "when attributes assigned without protection" do
+
+        let(:item) do
+          Item.create(
+            { :title => "Some Title",
+              :is_rss => true,
+              :user_login => "SomeLogin"
+            }, :without_protection => true
+          )
+        end
+
+        it "sets the title attribute" do
+          item.title.should eq("Some Title")
+        end
+
+        it "sets the user login attribute" do
+          item.user_login.should eq("SomeLogin")
+        end
+
+        it "sets the rss attribute" do
+          item.is_rss.should be_true
+        end
       end
     end
   end
@@ -91,7 +164,7 @@ describe Mongoid::Persistence do
       end
 
       it "sets the attributes" do
-        person.ssn.should == "666-66-6666"
+        person.ssn.should eq("666-66-6666")
       end
 
       it "persists the document" do
@@ -107,6 +180,86 @@ describe Mongoid::Persistence do
 
       it "saves the document" do
         account.should be_persisted
+      end
+    end
+
+    context "when a callback returns false" do
+
+      it "raises a callback error" do
+        expect { Oscar.create! }.to raise_error(Mongoid::Errors::Callback)
+      end
+    end
+
+    context "when mass assignment role is indicated" do
+
+      context "when attributes assigned from default role" do
+
+        let(:item) do
+          Item.create!(
+            :title => "Some Title",
+            :is_rss => true,
+            :user_login => "SomeLogin"
+          )
+        end
+
+        it "sets the field for the default role" do
+          item.is_rss.should be_true
+        end
+
+        it "does not set the field for non default role title" do
+          item.title.should be_nil
+        end
+
+        it "does not set the field for non default role user login" do
+          item.user_login.should be_nil
+        end
+      end
+
+      context "when attributes assigned from parser role" do
+
+        let(:item) do
+          Item.create!(
+            { :title => "Some Title",
+              :is_rss => true,
+              :user_login => "SomeLogin" }, :as => :parser
+          )
+        end
+
+        it "sets the user login field for parser role" do
+          item.user_login.should eq("SomeLogin")
+        end
+
+        it "sets the is rss field for parse role" do
+          item.is_rss.should eq(false)
+        end
+
+        it "does not set the title field" do
+          item.title.should be_nil
+        end
+      end
+
+      context "when attributes assigned without protection" do
+
+        let(:item) do
+          Item.create!(
+            { :title => "Some Title",
+              :is_rss => true,
+              :user_login => "SomeLogin"
+            }, :without_protection => true
+          )
+        end
+
+        it "sets the title attribute" do
+          item.title.should eq("Some Title")
+        end
+
+        it "sets the user login attribute" do
+          item.user_login.should eq("SomeLogin")
+        end
+
+        it "sets the rss attribute" do
+          item.is_rss.should be_true
+        end
       end
     end
   end
@@ -134,6 +287,10 @@ describe Mongoid::Persistence do
         it "returns true" do
           deleted.should be_true
         end
+
+        it "resets the flagged for destroy flag" do
+          person.should_not be_flagged_for_destroy
+        end
       end
 
       context "when removing an embedded document" do
@@ -154,6 +311,10 @@ describe Mongoid::Persistence do
 
           it "removes the attributes from the parent" do
             person.raw_attributes["addresses"].should be_nil
+          end
+
+          it "resets the flagged for destroy flag" do
+            address.should_not be_flagged_for_destroy
           end
         end
 
@@ -197,6 +358,10 @@ describe Mongoid::Persistence do
           it "removes the object from the parent and database" do
             from_db.addresses.first.locations.should be_empty
           end
+
+          it "resets the flagged for destroy flag" do
+            location.should_not be_flagged_for_destroy
+          end
         end
       end
     end
@@ -237,7 +402,7 @@ describe Mongoid::Persistence do
       end
 
       it "has the appropriate errors" do
-        address.errors[:street].should == ["can't be blank"]
+        address.errors[:street].should eq(["can't be blank"])
       end
     end
 
@@ -268,21 +433,21 @@ describe Mongoid::Persistence do
 
         it "saves the root document" do
           person.save
-          person.title.should == "King"
+          person.title.should eq("King")
         end
 
         it "saves embedded many relations" do
           person.save
-          person.addresses.first.street.should == "Bond St"
+          person.addresses.first.street.should eq("Bond St")
         end
 
         it "saves embedded one relations" do
           person.save
-          person.name.first_name.should == "Ryan"
+          person.name.first_name.should eq("Ryan")
         end
 
         it "persists with proper set and push modifiers" do
-          person.atomic_updates.should == {
+          person.atomic_updates.should eq({
             "$set" => {
               "title" => "King",
               "name.first_name" => "Ryan"
@@ -290,7 +455,7 @@ describe Mongoid::Persistence do
             "$pushAll"=> {
               "addresses" => [ { "_id" => address.id, "street" => "Bond St" } ]
             }
-          }
+          })
         end
       end
 
@@ -327,15 +492,15 @@ describe Mongoid::Persistence do
         end
 
         it "saves modifications to existing embedded docs" do
-          from_db.addresses[0].number.should == 102
+          from_db.addresses[0].number.should eq(102)
         end
 
         it "saves modifications to new embedded docs" do
-          from_db.addresses[1].street.should == 'North Ave'
+          from_db.addresses[1].street.should eq('North Ave')
         end
 
         it "saves modifications to deeply embedded docs" do
-          from_db.addresses[0].locations.first.name.should == 'Work'
+          from_db.addresses[0].locations.first.name.should eq('Work')
         end
       end
 
@@ -410,6 +575,17 @@ describe Mongoid::Persistence do
       it 'raises an error with multiple save attempts' do
         expect { subject.save! }.should raise_error
         expect { subject.save! }.should raise_error
+      end
+    end
+
+    context "when a callback returns false" do
+
+      let(:oscar) do
+        Oscar.new
+      end
+
+      it "raises a callback error" do
+        expect { oscar.save! }.to raise_error(Mongoid::Errors::Callback)
       end
     end
   end
@@ -490,7 +666,7 @@ describe Mongoid::Persistence do
         end
 
         it "sets the attribute" do
-          post.title.should == "Testing"
+          post.title.should eq("Testing")
         end
 
         it "saves the document" do
@@ -516,7 +692,7 @@ describe Mongoid::Persistence do
         end
 
         it "sets the attribute" do
-          post.title.should == "$invalid"
+          post.title.should eq("$invalid")
         end
 
         it "saves the document" do
@@ -547,7 +723,7 @@ describe Mongoid::Persistence do
         end
 
         it "sets the attribute" do
-          post.title.should == "Testing"
+          post.title.should eq("Testing")
         end
 
         it "saves the document" do
@@ -562,12 +738,71 @@ describe Mongoid::Persistence do
         end
 
         it "sets the attribute" do
-          post.title.should == "$invalid"
+          post.title.should eq("$invalid")
         end
 
         it "saves the document" do
           post.should be_persisted
         end
+      end
+    end
+
+    context "when persisting a localized field" do
+
+      let!(:product) do
+        Product.create(:description => "The bomb")
+      end
+
+      before do
+        ::I18n.locale = :de
+        product.update_attribute(:description, "Die Bombe")
+      end
+
+      after do
+        ::I18n.locale = :en
+      end
+
+      let(:attributes) do
+        product.attributes["description"]
+      end
+
+      it "persists the en locale" do
+        attributes["en"].should eq("The bomb")
+      end
+
+      it "persists the de locale" do
+        attributes["de"].should eq("Die Bombe")
+      end
+    end
+
+    context "when updating a deeply embedded document" do
+
+      let!(:person) do
+        Person.create(:ssn => "345-12-1212")
+      end
+
+      let!(:address) do
+        person.addresses.create(:street => "Winterfeldtstr")
+      end
+
+      let!(:location) do
+        address.locations.create(:name => "work")
+      end
+
+      let(:from_db) do
+        Person.last.addresses.last.locations.last
+      end
+
+      before do
+        from_db.update_attribute(:name, "home")
+      end
+
+      it "updates the attribute" do
+        from_db.name.should eq("home")
+      end
+
+      it "persists the changes" do
+        from_db.reload.name.should eq("home")
       end
     end
   end
@@ -647,7 +882,7 @@ describe Mongoid::Persistence do
       end
 
       it "saves the attributes" do
-        person.ssn.should == "555-66-7777"
+        person.ssn.should eq("555-66-7777")
       end
     end
 
@@ -685,15 +920,15 @@ describe Mongoid::Persistence do
           end
 
           it "sets the instance of the relation" do
-            person.posts.should == [ post ]
+            person.posts.should eq([ post ])
           end
 
           it "sets properly through method_missing" do
-            person.posts.to_a.should == [ post ]
+            person.posts.to_a.should eq([ post ])
           end
 
           it "persists the reference" do
-            person.posts(true).should == [ post ]
+            person.posts(true).should eq([ post ])
           end
         end
 
@@ -705,15 +940,15 @@ describe Mongoid::Persistence do
           end
 
           it "sets the instance of the relation" do
-            person.posts.should == [ post ]
+            person.posts.should eq([ post ])
           end
 
           it "sets properly through method_missing" do
-            person.posts.to_a.should == [ post ]
+            person.posts.to_a.should eq([ post ])
           end
 
           it "persists the reference" do
-            person.posts(true).should == [ post ]
+            person.posts(true).should eq([ post ])
           end
         end
       end
@@ -740,11 +975,11 @@ describe Mongoid::Persistence do
       end
 
       it "sets the first level document" do
-        person.phone_numbers.first.should == phone_number
+        person.phone_numbers.first.should eq(phone_number)
       end
 
       it "sets the second level document" do
-        person.phone_numbers.first.country_code.should == country_code
+        person.phone_numbers.first.country_code.should eq(country_code)
       end
 
       context "when updating the first level document" do
@@ -759,7 +994,7 @@ describe Mongoid::Persistence do
         end
 
         it "sets the new attributes" do
-          phone.number.should == "098-765-4321"
+          phone.number.should eq("098-765-4321")
         end
 
         context "when reloading the root" do
@@ -769,9 +1004,25 @@ describe Mongoid::Persistence do
           end
 
           it "saves the new attributes" do
-            reloaded.phone_numbers.first.number.should == "098-765-4321"
+            reloaded.phone_numbers.first.number.should eq("098-765-4321")
           end
         end
+      end
+    end
+  end
+
+  describe "#update_attributes!" do
+
+    context "when a callback returns false" do
+
+      let(:oscar) do
+        Oscar.new
+      end
+
+      it "raises a callback error" do
+        expect {
+          oscar.update_attributes!(:title => "The Grouch")
+        }.to raise_error(Mongoid::Errors::Callback)
       end
     end
   end
@@ -781,19 +1032,59 @@ describe Mongoid::Persistence do
     describe "##{method}" do
 
       let!(:person) do
-        Person.create(:ssn => "712-34-5111")
+        Person.create(:ssn => "712-34-5111", :title => "sir")
       end
 
-      let!(:removed) do
-        Person.send(method)
+      context "when no conditions are provided" do
+
+        let!(:removed) do
+          Person.send(method)
+        end
+
+        it "removes all the documents" do
+          Person.count.should eq(0)
+        end
+
+        it "returns the number of documents removed" do
+          removed.should eq(1)
+        end
       end
 
-      it "removes all the documents" do
-        Person.count.should == 0
-      end
+      context "when conditions are provided" do
 
-      it "returns the number of documents removed" do
-        removed.should == 1
+        let!(:person_two) do
+          Person.create(:ssn => "712-34-5112", :title => "madam")
+        end
+
+        context "when in a conditions attribute" do
+
+          let!(:removed) do
+            Person.send(method, :conditions => { :title => "sir" })
+          end
+
+          it "removes the matching documents" do
+            Person.count.should eq(1)
+          end
+
+          it "returns the number of documents removed" do
+            removed.should eq(1)
+          end
+        end
+
+        context "when no conditions attribute provided" do
+
+          let!(:removed) do
+            Person.send(method, :title => "sir")
+          end
+
+          it "removes the matching documents" do
+            Person.count.should eq(1)
+          end
+
+          it "returns the number of documents removed" do
+            removed.should eq(1)
+          end
+        end
       end
     end
   end

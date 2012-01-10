@@ -15,12 +15,12 @@ module Mongoid #:nodoc:
         :class_name => self.name,
         :validate => false,
         :cyclic => true,
+        :inverse_of => nil,
         :versioned => true
 
       set_callback :save, :before, :revise, :if => :revisable?
 
       class_attribute :version_max
-      delegate :version_max, :to => "self.class"
       self.cyclic = true
     end
 
@@ -36,10 +36,30 @@ module Mongoid #:nodoc:
     def revise
       previous = previous_revision
       if previous && versioned_attributes_changed?
-        new_version = versions.build(previous.versioned_attributes)
-        versions.shift if version_max.present? && versions.length > version_max
+        versions.build(
+          previous.versioned_attributes, :without_protection => true
+        ).attributes.delete("_id")
+        if version_max.present? && versions.length > version_max
+          versions.delete(versions.first)
+        end
         self.version = (version || 1 ) + 1
       end
+    end
+
+    # Forces the creation of a new version of the +Document+, regardless of
+    # whether a change was actually made.
+    #
+    # @example Revise the document.
+    #   person.revise!
+    #
+    # @since 2.2.1
+    def revise!
+      new_version = versions.build(
+        (previous_revision || self).versioned_attributes, :without_protection => true
+      )
+      versions.shift if version_max.present? && versions.length > version_max
+      self.version = (version || 1 ) + 1
+      save
     end
 
     # Filters the results of +changes+ by removing any fields that should
@@ -101,9 +121,11 @@ module Mongoid #:nodoc:
     #
     # @since 2.0.0
     def previous_revision
-      self.class.
-        where(:_id => id).
-        any_of({ :version => version }, { :version => nil }).first
+      _loading_revision do
+        self.class.
+          where(:_id => id).
+          any_of({ :version => version }, { :version => nil }).first
+      end
     end
 
     # Is the document able to be revised? This is true if the document has
@@ -142,7 +164,7 @@ module Mongoid #:nodoc:
     # @since 2.1.0
     def only_versioned_attributes(hash)
       {}.tap do |versioned|
-        hash.each_pair do |name, value|
+        hash.except("versions").each_pair do |name, value|
           field = fields[name]
           versioned[name] = value if !field || field.versioned?
         end

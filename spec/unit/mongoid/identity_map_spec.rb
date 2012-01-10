@@ -50,33 +50,156 @@ describe Mongoid::IdentityMap do
 
   describe "#get" do
 
-    let(:document) do
-      Person.new
+    context "normal model" do
+      let!(:person) do
+        Person.new
+      end
+
+      context "when getting by id" do
+
+        context "when the document exists in the identity map" do
+
+          before do
+            identity_map.set(person)
+          end
+
+          let(:get) do
+            identity_map.get(Person, person.id)
+          end
+
+          it "returns the matching person" do
+            get.should eq(person)
+          end
+        end
+
+        context "when the person does not exist in the map" do
+
+          let(:get) do
+            identity_map.get(Person, person.id)
+          end
+
+          it "returns nil" do
+            get.should be_nil
+          end
+        end
+      end
+
+      context "when getting by selector" do
+
+        let!(:post_one) do
+          Post.new(:person => person)
+        end
+
+        let!(:post_two) do
+          Post.new(:person => person)
+        end
+
+        context "when there are documents in the map" do
+
+          before do
+            identity_map.set_many(post_one, :person_id => person.id)
+            identity_map.set_many(post_two, :person_id => person.id)
+          end
+
+          let(:documents) do
+            identity_map.get(Post, :person_id => person.id)
+          end
+
+          it "returns the matching documents" do
+            documents.should eq([ post_one, post_two ])
+          end
+        end
+
+        context "when there are no documents in the map" do
+
+          let(:documents) do
+            identity_map.get(Post, :person_id => person.id)
+          end
+
+          it "returns nil" do
+            documents.should be_nil
+          end
+        end
+      end
     end
 
-    context "when the document exists in the identity map" do
+    context "inherited class" do
 
-      before do
-        identity_map.set(document)
+      let!(:document) do
+        Firefox.new
       end
 
-      let(:get) do
-        identity_map.get(Person, document.id)
-      end
+      context "when getting by id" do
 
-      it "returns the matching document" do
-        get.should eq(document)
+        context "when the document exists in the identity map" do
+
+          before do
+            identity_map.set(document)
+          end
+
+          it "returns the matching document by class" do
+            get = identity_map.get(Firefox, document.id)
+            get.should eq(document)
+          end
+
+          it "returns the matching document by superclass" do
+            get = identity_map.get(Browser, document.id)
+            get.should eq(document)
+          end
+
+          it "returns the matching document by class" do
+            get = identity_map.get(Canvas, document.id)
+            get.should eq(document)
+          end
+        end
+
+        context "when the document does not exist in the map" do
+
+          let(:get) do
+            identity_map.get(Firefox, document.id)
+          end
+
+          it "returns nil" do
+            get.should be_nil
+          end
+        end
       end
     end
 
-    context "when the document does not exist in the map" do
+    context "embedded class" do
 
-      let(:get) do
-        identity_map.get(Person, document.id)
+      let!(:animal) do
+        circus = Circus.new(:animals => [ Animal.new(:name => "Lion") ])
+        circus.animals.first
       end
 
-      it "returns nil" do
-        get.should be_nil
+      context "when getting by id" do
+
+        context "when the document exists in the identity map" do
+
+          before do
+            identity_map.set(animal)
+          end
+
+          let(:get) do
+            identity_map.get(Animal, animal.id)
+          end
+
+          it "returns the matching document" do
+            get.should eq(animal)
+          end
+        end
+
+        context "when the document does not exist in the map" do
+
+          let(:get) do
+            identity_map.get(Animal, animal.id)
+          end
+
+          it "returns nil" do
+            get.should be_nil
+          end
+        end
       end
     end
   end
@@ -129,51 +252,6 @@ describe Mongoid::IdentityMap do
 
       it "returns nil" do
         get.should be_nil
-      end
-    end
-  end
-
-  describe "#match" do
-
-    let(:document) do
-      Person.new
-    end
-
-    context "when the criteria matches" do
-
-      let(:criteria) do
-        Person.where(:_id => document.id)
-      end
-
-      before do
-        described_class.set(document)
-      end
-
-      let(:match) do
-        described_class.match(criteria)
-      end
-
-      it "returns the document" do
-        match.should eq(document)
-      end
-    end
-
-    context "when the criteria does not match" do
-
-      let(:criteria) do
-        Person.where(:_id => BSON::ObjectId.new)
-      end
-
-      before do
-        described_class.set(document)
-      end
-
-      let(:match) do
-        described_class.match(criteria)
-      end
-
-      it "returns nil" do
-        match.should be_nil
       end
     end
   end
@@ -321,6 +399,63 @@ describe Mongoid::IdentityMap do
     end
   end
 
+  describe "#set_many" do
+
+    let!(:person) do
+      Person.new
+    end
+
+    let!(:post_one) do
+      Post.new(:person => person)
+    end
+
+    let!(:post_two) do
+      Post.new(:person => person)
+    end
+
+    context "when no documents exist for the selector" do
+
+      let!(:set) do
+        identity_map.set_many(post_one, { :person_id => person.id })
+        identity_map.set_many(post_two, { :person_id => person.id })
+      end
+
+      let(:documents) do
+        identity_map[Post.collection_name][{ :person_id => person.id }]
+      end
+
+      it "puts the documents in the map" do
+        documents.should eq([ post_one, post_two ])
+      end
+    end
+  end
+
+  describe "#set_one" do
+
+    let!(:person) do
+      Person.new
+    end
+
+    let!(:post_one) do
+      Post.new(:person => person)
+    end
+
+    context "when no documents exist for the selector" do
+
+      let!(:set) do
+        identity_map.set_one(post_one, { :person_id => person.id })
+      end
+
+      let(:document) do
+        identity_map[Post.collection_name][{ :person_id => person.id }]
+      end
+
+      it "puts the documents in the map" do
+        document.should eq(post_one)
+      end
+    end
+  end
+
   describe ".set" do
 
     context "when setting a document" do
@@ -382,6 +517,7 @@ describe Mongoid::IdentityMap do
         end
 
         it "gets the object from the identity map" do
+          pending "segfault on 1.9.2-p290 on Intel i7 OSX Lion"
           fiber.resume
         end
       end

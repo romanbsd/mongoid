@@ -11,7 +11,7 @@ describe Mongoid::Matchers do
       end
 
       before do
-        document.locations << Location.new(:name => 'No.1')
+        document.locations << Location.new(:name => 'No.1', :info => { 'door' => 'Red'} )
       end
 
       context "when the attributes do not match" do
@@ -33,11 +33,44 @@ describe Mongoid::Matchers do
           it "returns false " do
             document.locations.first.matches?(selector).should be_false
           end
-
         end
-
       end
 
+      context "when matching embedded hash values" do
+
+        context "when the contents match" do
+
+          let(:selector) do
+            { "info.door" => "Red" }
+          end
+
+          it "returns true" do
+            document.locations.first.matches?(selector).should be_true
+          end
+        end
+
+        context "when the contents do not match" do
+
+          let(:selector) do
+            { "info.door" => "Blue" }
+          end
+
+          it "returns false" do
+            document.locations.first.matches?(selector).should be_false
+          end
+        end
+
+        context "when the contents do not exist" do
+
+          let(:selector) do
+            { "info.something_else" => "Red" }
+          end
+
+          it "returns false" do
+            document.locations.first.matches?(selector).should be_false
+          end
+        end
+      end
     end
 
     context "when performing simple matching" do
@@ -72,7 +105,11 @@ describe Mongoid::Matchers do
     context "when performing complex matching" do
 
       let(:document) do
-        Address.new(:services => ["first", "second"], :number => 100)
+        Address.new(
+          :services => ["first", "second"],
+          :number => 100,
+          :map => { :key => "value" }
+        )
       end
 
       context "with an $all selector" do
@@ -167,6 +204,31 @@ describe Mongoid::Matchers do
 
           let(:selector) do
             { :number => { "$gte" => 200 } }
+          end
+
+          it "returns false" do
+            document.matches?(selector).should be_false
+          end
+        end
+      end
+
+      context "with an $in selector on Array" do
+
+        context "when the attributes match" do
+
+          let(:selector) do
+            { :services => { "$in" => [ "first" ] } }
+          end
+
+          it "returns true" do
+            document.matches?(selector).should be_true
+          end
+        end
+
+        context "when the attributes do not match" do
+
+          let(:selector) do
+            { :number => { "$in" => [ "none" ] } }
           end
 
           it "returns false" do
@@ -275,6 +337,31 @@ describe Mongoid::Matchers do
         end
       end
 
+      context "with a $nin selector on Array" do
+
+        context "when the attributes match" do
+
+          let(:selector) do
+            { :services => { "$nin" => [ "none" ] } }
+          end
+
+          it "returns true" do
+            document.matches?(selector).should be_true
+          end
+        end
+
+        context "when the attributes do not match" do
+
+          let(:selector) do
+            { :services => { "$nin" => [ "first" ] } }
+          end
+
+          it "returns false" do
+            document.matches?(selector).should be_false
+          end
+        end
+      end
+
       context "with a $nin selector" do
 
         context "when the attributes match" do
@@ -342,6 +429,31 @@ describe Mongoid::Matchers do
 
           let(:selector) do
             { :services => { "$size" => 5 } }
+          end
+
+          it "returns false" do
+            document.matches?(selector).should be_false
+          end
+        end
+      end
+
+      context "with a hash value" do
+
+        context "when the attributes match" do
+
+          let(:selector) do
+            { :map => { :key => "value" } }
+          end
+
+          it "returns true" do
+            document.matches?(selector).should be_true
+          end
+        end
+
+        context "when the attributes do not match" do
+
+          let(:selector) do
+            { :map => { :key => "value2" } }
           end
 
           it "returns false" do

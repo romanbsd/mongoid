@@ -1,5 +1,4 @@
 # encoding: utf-8
-require "mongoid/relations/cascading/strategy"
 require "mongoid/relations/cascading/delete"
 require "mongoid/relations/cascading/destroy"
 require "mongoid/relations/cascading/nullify"
@@ -15,7 +14,6 @@ module Mongoid # :nodoc:
       included do
         class_attribute :cascades
         self.cascades = []
-        delegate :cascades, :to => "self.class"
       end
 
       # Perform all cascading deletes, destroys, or nullifies. Will delegate to
@@ -27,9 +25,11 @@ module Mongoid # :nodoc:
       # @since 2.0.0.rc.1
       def cascade!
         cascades.each do |name|
-          metadata = relations[name]
-          strategy = metadata.cascade_strategy
-          strategy.new(self, metadata).cascade
+          if !metadata || !metadata.versioned?
+            meta = relations[name]
+            strategy = meta.cascade_strategy
+            strategy.new(self, meta).cascade
+          end
         end
       end
 

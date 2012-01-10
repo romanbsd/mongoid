@@ -7,9 +7,7 @@ module Mongoid #:nodoc:
     extend ActiveSupport::Concern
     include Mongoid::Components
 
-    included do
-      attr_reader :new_record
-    end
+    attr_reader :new_record
 
     # Default comparison is via the string version of the id.
     #
@@ -70,8 +68,7 @@ module Mongoid #:nodoc:
     #
     # @since 2.0.0
     def freeze
-      attributes.freeze
-      self
+      tap { |doc| doc.as_document.freeze }
     end
 
     # Checks if the document is frozen
@@ -83,7 +80,7 @@ module Mongoid #:nodoc:
     #
     # @since 2.0.0
     def frozen?
-      raw_attributes.frozen?
+      attributes.frozen?
     end
 
     # Delegates to id in order to allow two records of the same type and id to
@@ -97,17 +94,7 @@ module Mongoid #:nodoc:
     #
     # @return [ Integer ] The hash of the document's id.
     def hash
-      raw_attributes["_id"].hash
-    end
-
-    # Generate an id for this +Document+.
-    #
-    # @example Create the id.
-    #   person.identify
-    #
-    # @return [ BSON::ObjectId, String ] A newly created id.
-    def identify
-      Identity.new(self).create
+      attributes["_id"].hash
     end
 
     # Instantiate a new +Document+, setting the Document's attributes if
@@ -121,45 +108,37 @@ module Mongoid #:nodoc:
     #   Person.new(:title => "Sir")
     #
     # @param [ Hash ] attrs The attributes to set up the document with.
+    # @param [ Hash ] options A mass-assignment protection options. Supports
+    #   :as and :without_protection
     #
     # @return [ Document ] A new document.
-    def initialize(attrs = nil)
-      building do
+    def initialize(attrs = nil, options = nil)
+      _building do
         @new_record = true
-        @attributes = apply_default_attributes
-        process(attrs) do
-          yield self if block_given?
-          identify
+        @attributes ||= {}
+        options ||= {}
+        apply_pre_processed_defaults
+        process(attrs, options[:as] || :default, !options[:without_protection]) do
+          yield(self) if block_given?
         end
+        apply_post_processed_defaults
         run_callbacks(:initialize) { self }
       end
     end
 
-    # Reloads the +Document+ attributes from the database. If the document has
-    # not been saved then an error will get raised if the configuration option
-    # was set.
+    # Return the key value for the document.
     #
-    # @example Reload the document.
-    #   person.reload
+    # @example Return the key.
+    #   document.to_key
     #
-    # @raise [ Errors::DocumentNotFound ] If the document was deleted.
+    # @return [ Object ] The id of the document or nil if new.
     #
-    # @return [ Document ] The document, reloaded.
-    def reload
-      reloaded = collection.find_one(:_id => id)
-      if Mongoid.raise_not_found_error
-        raise Errors::DocumentNotFound.new(self.class, id) if reloaded.nil?
-      end
-      @attributes = {}.merge(reloaded || {})
-      changed_attributes.clear
-      apply_default_attributes
-      tap do
-        relations.keys.each do |name|
-          if instance_variable_defined?("@#{name}")
-            remove_instance_variable("@#{name}")
-          end
-        end
-        run_callbacks(:initialize)
+    # @since 2.4.0
+    def to_key
+      if destroyed?
+        [ id ]
+      else
+        persisted? ? [ id ] : nil
       end
     end
 
@@ -183,9 +162,10 @@ module Mongoid #:nodoc:
     # @return [ Hash ] A hash of all attributes in the hierarchy.
     def as_document
       attributes.tap do |attrs|
+        return attrs if frozen?
         relations.each_pair do |name, meta|
           if meta.embedded?
-            relation = send(name, false, :continue => false)
+            relation = send(name)
             attrs[name] = relation.as_document unless relation.blank?
           end
         end
@@ -205,17 +185,59 @@ module Mongoid #:nodoc:
     # @return [ Document ] An instance of the specified class.
     def becomes(klass)
       unless klass.include?(Mongoid::Document)
-        raise ArgumentError, 'A class which includes Mongoid::Document is expected'
+        raise ArgumentError, "A class which includes Mongoid::Document is expected"
       end
-      klass.new.tap do |became|
-        became.instance_variable_set('@attributes', @attributes)
-        became.instance_variable_set('@errors', @errors)
-        became.instance_variable_set('@new_record', new_record?)
-        became.instance_variable_set('@destroyed', destroyed?)
+      klass.instantiate(frozen? ? attributes.dup : attributes).tap do |became|
+        became.instance_variable_set(:@errors, errors)
+        became.instance_variable_set(:@new_record, new_record?)
+        became.instance_variable_set(:@destroyed, destroyed?)
+        became._type = klass.to_s
       end
     end
 
+    # Print out the cache key. This will append different values on the
+    # plural model name.
+    #
+    # If new_record?     - will append /new
+    # If not             - will append /id-updated_at.to_s(:number)
+    # Without updated_at - will append /id
+    #
+    # This is usually called insode a cache() block
+    #
+    # @example Returns the cache key
+    #   document.cache_key
+    #
+    # @return [ String ] the string with or without updated_at
+    #
+    # @since 2.4.0
+    def cache_key
+      return "#{model_key}/new" if new_record?
+      return "#{model_key}/#{id}-#{updated_at.utc.to_s(:number)}" if updated_at
+      "#{model_key}/#{id}"
+    end
+
     private
+
+    # Returns the logger
+    #
+    # @return [ Logger ] The configured logger or a default Logger instance.
+    #
+    # @since 2.2.0
+    def logger
+      Mongoid.logger
+    end
+
+    # Get the name of the model used in caching.
+    #
+    # @example Get the model key.
+    #   model.model_key
+    #
+    # @return [ String ] The model key.
+    #
+    # @since 2.4.0
+    def model_key
+      @model_cache_key ||= "#{self.class.model_name.cache_key}"
+    end
 
     # Implement this for calls to flatten on array.
     #
@@ -258,8 +280,8 @@ module Mongoid #:nodoc:
         attributes = attrs || {}
         allocate.tap do |doc|
           doc.instance_variable_set(:@attributes, attributes)
-          doc.send(:apply_default_attributes)
-          IdentityMap.set(doc)
+          doc.apply_defaults
+          IdentityMap.set(doc) unless _loading_revision?
           doc.run_callbacks(:initialize) { doc }
         end
       end
@@ -275,8 +297,22 @@ module Mongoid #:nodoc:
       end
 
       # Set the i18n scope to overwrite ActiveModel.
+      #
+      # @return [ Symbol ] :mongoid
       def i18n_scope
         :mongoid
+      end
+
+      # Returns the logger
+      #
+      # @example Get the logger.
+      #   Person.logger
+      #
+      # @return [ Logger ] The configured logger or a default Logger instance.
+      #
+      # @since 2.2.0
+      def logger
+        Mongoid.logger
       end
     end
   end

@@ -27,17 +27,19 @@ module Mongoid #:nodoc:
       # @param [ Symbol ] attribute The relation to validate.
       # @param [ Object ] value The value of the relation.
       def validate_each(document, attribute, value)
-        document.validated = true
-        valid = Array.wrap(value).collect do |doc|
-          if doc.nil?
-            true
-          else
-            doc.validated? ? true : doc.valid?
-          end
-        end.all?
-        document.validated = false
-        return if valid
-        document.errors.add(attribute, :invalid, options.merge(:value => value))
+        begin
+          document.begin_validate
+          valid = Array.wrap(value).collect do |doc|
+            if doc.nil?
+              true
+            else
+              doc.validated? ? true : doc.valid?
+            end
+          end.all?
+        ensure
+          document.exit_validate
+        end
+        document.errors.add(attribute, :invalid) unless valid
       end
     end
   end

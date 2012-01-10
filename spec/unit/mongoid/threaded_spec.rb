@@ -6,110 +6,103 @@ describe Mongoid::Threaded do
     stub
   end
 
-  describe "#binding?" do
-
-    context "when binding is not set" do
-
-      it "returns false" do
-        described_class.should_not be_binding
-      end
-    end
-
-    context "when binding is true" do
-
-      before do
-        Thread.current[:"[mongoid]:binding-mode"] = true
-      end
-
-      after do
-        Thread.current[:"[mongoid]:binding-mode"] = nil
-      end
-
-      it "returns true" do
-        described_class.should be_binding
-      end
-    end
-
-    context "when binding is false" do
-
-      before do
-        Thread.current[:"[mongoid]:binding-mode"] = false
-      end
-
-      after do
-        Thread.current[:"[mongoid]:binding-mode"] = nil
-      end
-
-      it "returns false" do
-        described_class.should_not be_binding
-      end
-    end
-  end
-
-  describe "#binding=" do
+  describe "#begin" do
 
     before do
-      described_class.binding = true
+      described_class.begin(:load)
     end
 
     after do
-      described_class.binding = false
+      described_class.stack(:load).clear
     end
 
-    it "sets the binding mode" do
-      described_class.should be_binding
+    it "adds a boolen to the load stack" do
+      described_class.stack(:load).should eq([ true ])
     end
   end
 
-  describe "#building?" do
+  describe "#executing?" do
 
-    context "when building is not set" do
+    context "when loading is not set" do
 
       it "returns false" do
-        described_class.should_not be_building
+        described_class.should_not be_executing(:load)
       end
     end
 
-    context "when building is true" do
+    context "when the stack has elements" do
 
       before do
-        Thread.current[:"[mongoid]:building-mode"] = true
+        Thread.current[:"[mongoid]:load-stack"] = [ true ]
       end
 
       after do
-        Thread.current[:"[mongoid]:building-mode"] = nil
+        Thread.current[:"[mongoid]:load-stack"] = []
       end
 
       it "returns true" do
-        described_class.should be_building
+        described_class.should be_executing(:load)
       end
     end
 
-    context "when building is false" do
+    context "when the stack has no elements" do
 
       before do
-        Thread.current[:"[mongoid]:building-mode"] = false
-      end
-
-      after do
-        Thread.current[:"[mongoid]:building-mode"] = nil
+        Thread.current[:"[mongoid]:load-stack"] = []
       end
 
       it "returns false" do
-        described_class.should_not be_building
+        described_class.should_not be_executing(:load)
       end
     end
   end
 
-  describe "#clear_safety_options!" do
+  describe "#stack" do
 
-    before do
-      described_class.safety_options = { :w => 3 }
-      described_class.clear_safety_options!
+    context "when no stack has been initialized" do
+
+      let(:loading) do
+        described_class.stack(:load)
+      end
+
+      it "returns an empty stack" do
+        loading.should eq([])
+      end
     end
 
-    it "removes all safety options" do
-      described_class.safety_options.should be_nil
+    context "when a stack has been initialized" do
+
+      before do
+        Thread.current[:"[mongoid]:load-stack"] = [ true ]
+      end
+
+      let(:loading) do
+        described_class.stack(:load)
+      end
+
+      after do
+        Thread.current[:"[mongoid]:load-stack"] = []
+      end
+
+      it "returns the stack" do
+        loading.should eq([ true ])
+      end
+    end
+  end
+
+  describe "#exit" do
+
+    before do
+      described_class.begin(:load)
+      described_class.exit(:load)
+    end
+
+    after do
+      described_class.stack(:load).clear
+    end
+
+    it "removes a boolen from the stack" do
+      described_class.stack(:load).should be_empty
     end
   end
 
@@ -143,30 +136,30 @@ describe Mongoid::Threaded do
   describe "#insert" do
 
     before do
-      Thread.current[:"[mongoid]:insert-consumer"] = object
+      Thread.current[:"[mongoid][test]:insert-consumer"] = object
     end
 
     after do
-      Thread.current[:"[mongoid]:insert-consumer"] = nil
+      Thread.current[:"[mongoid][test]:insert-consumer"] = nil
     end
 
     it "returns the object with the insert key" do
-      described_class.insert.should eq(object)
+      described_class.insert("test").should eq(object)
     end
   end
 
-  describe "#insert=" do
+  describe "#set_insert" do
 
     before do
-      described_class.insert = object
+      described_class.set_insert("test", object)
     end
 
     after do
-      described_class.insert = nil
+      described_class.set_insert("test", nil)
     end
 
     let(:consumer) do
-      described_class.insert
+      described_class.insert("test")
     end
 
     it "sets the insert consumer" do
@@ -200,18 +193,137 @@ describe Mongoid::Threaded do
     end
   end
 
-  describe "#update" do
+  describe "#update_consumer" do
 
     before do
-      Thread.current[:"[mongoid]:update-consumer"] = object
+      Thread.current[:"[mongoid][Person]:update-consumer"] = object
     end
 
     after do
-      Thread.current[:"[mongoid]:update-consumer"] = nil
+      Thread.current[:"[mongoid][Person]:update-consumer"] = nil
     end
 
     it "returns the object with the update key" do
-      described_class.update.should eq(object)
+      described_class.update_consumer(Person).should eq(object)
+    end
+  end
+
+  describe "#set_update_consumer" do
+
+    before do
+      described_class.set_update_consumer(Person, object)
+    end
+
+    after do
+      Thread.current[:"[mongoid][Person]:update-consumer"] = nil
+    end
+
+    it "sets the object with the update key" do
+      described_class.update_consumer(Person).should eq(object)
+    end
+  end
+
+  describe "#timeless" do
+
+    before do
+      described_class.timeless = true
+    end
+
+    after do
+      described_class.timeless = false
+    end
+
+    it "returns the timeless value" do
+      described_class.timeless.should be_true
+    end
+  end
+
+  describe "#timestamping?" do
+
+    context "when timeless is not set" do
+
+      it "returns true" do
+        described_class.should be_timestamping
+      end
+    end
+
+    context "when timeless is true" do
+
+      before do
+        described_class.timeless = true
+      end
+
+      after do
+        described_class.timeless = false
+      end
+
+      it "returns false" do
+        described_class.should_not be_timestamping
+      end
+    end
+  end
+
+  describe "#begin_validate" do
+
+    let(:person) do
+      Person.new
+    end
+
+    before do
+      described_class.begin_validate(person)
+    end
+
+    after do
+      described_class.exit_validate(person)
+    end
+
+    it "marks the document as being validated" do
+      described_class.validations_for(Person).should eq([ person.id ])
+    end
+  end
+
+  describe "#exit_validate" do
+
+    let(:person) do
+      Person.new
+    end
+
+    before do
+      described_class.begin_validate(person)
+      described_class.exit_validate(person)
+    end
+
+    it "unmarks the document as being validated" do
+      described_class.validations_for(Person).should be_empty
+    end
+  end
+
+  describe "#validated?" do
+
+    let(:person) do
+      Person.new
+    end
+
+    context "when the document is validated" do
+
+      before do
+        described_class.begin_validate(person)
+      end
+
+      after do
+        described_class.exit_validate(person)
+      end
+
+      it "returns true" do
+        described_class.validated?(person).should be_true
+      end
+    end
+
+    context "when the document is not validated" do
+
+      it "returns false" do
+        described_class.validated?(person).should be_false
+      end
     end
   end
 end

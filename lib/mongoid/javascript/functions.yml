@@ -10,22 +10,38 @@ group:
 
 max:
   "function(obj, prev) {
-     if (prev.max == 'start') {
+     if (obj.[field] && prev.max == 'start') {
        prev.max = obj.[field];
      }
-     if (prev.max < obj.[field]) {
+     if (obj.[field] && prev.max < obj.[field]) {
        prev.max = obj.[field];
      }
    }"
 
+max_finalize:
+  "function(obj) {
+     if (obj.max == 'start' || isNaN(obj.max)) {
+       obj.max = 0;
+     }
+     return obj;
+   }"
+
 min:
   "function(obj, prev) {
-     if (prev.min == 'start') {
+     if (obj.[field] && prev.min == 'start') {
        prev.min = obj.[field];
      }
-     if (prev.min > obj.[field]) {
+     if (obj.[field] && prev.min > obj.[field]) {
        prev.min = obj.[field];
      }
+   }"
+
+min_finalize:
+  "function(obj) {
+     if (obj.min == 'start' || isNaN(obj.min)) {
+       obj.min = 0;
+     }
+     return obj;
    }"
 
 sum:
@@ -33,5 +49,15 @@ sum:
      if (prev.sum == 'start') {
        prev.sum = 0;
      }
-     prev.sum += obj.[field];
+     if (obj.[field]) {
+       prev.sum += obj.[field];
+     }
   }"
+
+sum_finalize:
+  "function(obj) {
+     if (obj.sum == 'start' || isNaN(obj.sum)) {
+       obj.sum = 0;
+     }
+     return obj;
+   }"

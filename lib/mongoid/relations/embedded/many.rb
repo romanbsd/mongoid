@@ -17,21 +17,42 @@ module Mongoid # :nodoc:
         # @example Push a document.
         #   person.addresses.push(address)
         #
+        # @param [ Document, Array<Document> ] *args Any number of documents.
+        def <<(*args)
+          docs = args.flatten
+          return concat(docs) if docs.size > 1
+          if doc = docs.first
+            append(doc)
+            doc.save if persistable? && !_assigning?
+          end
+        end
+        alias :push :<<
+
+        # Appends an array of documents to the relation. Performs a batch
+        # insert of the documents instead of persisting one at a time.
+        #
+        # @note When performing batch inserts the *after* callbacks will get
+        #   executed before the documents have actually been persisted to the
+        #   database due to an issue with Active Support's callback system - we
+        #   cannot explicitly fire the after callbacks by themselves.
+        #
         # @example Concat with other documents.
         #   person.addresses.concat([ address_one, address_two ])
         #
-        # @param [ Document, Array<Document> ] *args Any number of documents.
-        def <<(*args)
+        # @param [ Array<Document> ] documents The docs to add.
+        #
+        # @return [ Array<Document> ] The documents.
+        #
+        # @since 2.4.0
+        def concat(documents)
           atomically(:$pushAll) do
-            args.flatten.each do |doc|
+            documents.each do |doc|
               next unless doc
               append(doc)
               doc.save if persistable?
             end
           end
         end
-        alias :concat :<<
-        alias :push :<<
 
         # Builds a new document in the relation and appends it to the target.
         # Takes an optional type if you want to specify a subclass.
@@ -39,15 +60,25 @@ module Mongoid # :nodoc:
         # @example Build a new document on the relation.
         #   person.people.build(:name => "Bozo")
         #
-        # @param [ Hash ] attributes The attributes to build the document with.
-        # @param [ Class ] type Optional class to build the document with.
+        # @overload build(attributes = {}, options = {}, type = nil)
+        #   @param [ Hash ] attributes The attributes to build the document with.
+        #   @param [ Hash ] options The scoped assignment options.
+        #   @param [ Class ] type Optional class to build the document with.
+        #
+        # @overload build(attributes = {}, type = nil)
+        #   @param [ Hash ] attributes The attributes to build the document with.
+        #   @param [ Class ] type Optional class to build the document with.
         #
         # @return [ Document ] The new document.
-        def build(attributes = {}, type = nil)
-          Factory.build(type || metadata.klass, attributes).tap do |doc|
-            doc.identify
+        def build(attributes = {}, options = {}, type = nil)
+          if options.is_a? Class
+            options, type = {}, options
+          end
+
+          Factory.build(type || metadata.klass, attributes, options).tap do |doc|
             append(doc)
             yield(doc) if block_given?
+            doc.run_callbacks(:build) { doc }
           end
         end
         alias :new :build
@@ -61,7 +92,10 @@ module Mongoid # :nodoc:
         # @return [ Many ] The empty relation.
         def clear
           tap do |proxy|
-            atomically(:$unset) { proxy.delete_all }
+            atomically(:$unset) do
+              proxy.delete_all
+              _unscoped.clear
+            end
           end
         end
 
@@ -85,12 +119,18 @@ module Mongoid # :nodoc:
         # @example Create a new document in the relation.
         #   person.movies.create(:name => "Bozo")
         #
-        # @param [ Hash ] attributes The attributes to build the document with.
-        # @param [ Class ] type Optional class to create the document with.
+        # @overload create(attributes = {}, options = {}, type = nil)
+        #   @param [ Hash ] attributes The attributes to build the document with.
+        #   @param [ Hash ] options The scoped assignment options.
+        #   @param [ Class ] type Optional class to create the document with.
+        #
+        # @overload create(attributes = {}, type = nil)
+        #   @param [ Hash ] attributes The attributes to build the document with.
+        #   @param [ Class ] type Optional class to create the document with.
         #
         # @return [ Document ] The newly created document.
-        def create(attributes = {}, type = nil, &block)
-          build(attributes, type, &block).tap { |doc| doc.save }
+        def create(attributes = {}, options = {}, type = nil, &block)
+          build(attributes, options, type, &block).tap { |doc| doc.save }
         end
 
         # Create a new document in the relation. This is essentially the same
@@ -100,14 +140,20 @@ module Mongoid # :nodoc:
         # @example Create the document.
         #   person.addresses.create!(:street => "Unter der Linden")</tt>
         #
-        # @param [ Hash ] attributes The attributes to build the document with.
-        # @param [ Class ] type Optional class to create the document with.
+        # @overload create!(attributes = {}, options = {}, type = nil)
+        #   @param [ Hash ] attributes The attributes to build the document with.
+        #   @param [ Hash ] options The scoped assignment options.
+        #   @param [ Class ] type Optional class to create the document with.
+        #
+        # @overload create!(attributes = {}, type = nil)
+        #   @param [ Hash ] attributes The attributes to build the document with.
+        #   @param [ Class ] type Optional class to create the document with.
         #
         # @raise [ Errors::Validations ] If a validation error occured.
         #
         # @return [ Document ] The newly created document.
-        def create!(attributes = {}, type = nil, &block)
-          build(attributes, type, &block).tap { |doc| doc.save! }
+        def create!(attributes = {}, options = {}, type = nil, &block)
+          build(attributes, options, type, &block).tap { |doc| doc.save! }
         end
 
         # Delete the supplied document from the target. This method is proxied
@@ -123,8 +169,13 @@ module Mongoid # :nodoc:
         # @since 2.0.0.rc.1
         def delete(document)
           target.delete_one(document).tap do |doc|
-            if doc && !binding?
-              doc.delete(:suppress => true)
+            _unscoped.delete_one(doc)
+            if doc && !_binding?
+              if _assigning? && !doc.paranoid?
+                base.add_atomic_pull(doc)
+              else
+                doc.delete(:suppress => true)
+              end
               unbind_one(doc)
             end
             reindex
@@ -137,7 +188,7 @@ module Mongoid # :nodoc:
         #   person.addresses.delete_all
         #
         # @example Conditionally delete documents from the relation.
-        #   person.addresses.delete_all(:conditions => { :street => "Bond" })
+        #   person.addresses.delete_all({ :street => "Bond" })
         #
         # @param [ Hash ] conditions Conditions on which documents to delete.
         #
@@ -152,7 +203,7 @@ module Mongoid # :nodoc:
         #   person.addresses.destroy_all
         #
         # @example Conditionally destroy documents from the relation.
-        #   person.addresses.destroy_all(:conditions => { :street => "Bond" })
+        #   person.addresses.destroy_all({ :street => "Bond" })
         #
         # @param [ Hash ] conditions Conditions on which documents to destroy.
         #
@@ -169,11 +220,6 @@ module Mongoid # :nodoc:
         #
         # @example Find documents for multiple ids.
         #   person.addresses.find([ BSON::ObjectId.new, BSON::ObjectId.new ])
-        #
-        # @example Find documents based on conditions.
-        #   person.addresses.find(:all, :conditions => { :number => 10 })
-        #   person.addresses.find(:first, :conditions => { :number => 10 })
-        #   person.addresses.find(:last, :conditions => { :number => 10 })
         #
         # @param [ Array<Object> ] args Various arguments.
         #
@@ -198,6 +244,8 @@ module Mongoid # :nodoc:
               integrate(doc)
               doc._index = index
             end
+            @_unscoped = target.dup
+            @target = scope(target)
           end
         end
 
@@ -228,14 +276,25 @@ module Mongoid # :nodoc:
         def substitute(replacement)
           tap do |proxy|
             if replacement.blank?
+              if _assigning? && !proxy.empty?
+                base.atomic_unsets.push(proxy.first.atomic_path)
+              end
               proxy.clear
             else
               atomically(:$set) do
-                proxy.target = replacement.compact
+                if replacement.first.is_a?(Hash)
+                  replacement = Many.builder(base, metadata, replacement).build
+                end
+                docs = replacement.compact
+                proxy.target = docs
+                self._unscoped = docs.dup
+                if _assigning?
+                  base.delayed_atomic_sets[metadata.name.to_s] = proxy.as_document
+                end
                 proxy.target.each_with_index do |doc, index|
                   integrate(doc)
                   doc._index = index
-                  doc.save if base.persisted?
+                  doc.save if base.persisted? && !_assigning?
                 end
               end
             end
@@ -252,9 +311,24 @@ module Mongoid # :nodoc:
         # @since 2.0.0.rc.1
         def as_document
           [].tap do |attributes|
-            target.each do |doc|
-              attributes << doc.as_document
+            _unscoped.each do |doc|
+              attributes.push(doc.as_document)
             end
+          end
+        end
+
+        # Return the relation with all previous scoping removed. This is the
+        # exact representation of the docs in the database.
+        #
+        # @example Get the unscoped documents.
+        #   person.addresses.unscoped
+        #
+        # @return [ Criteria ] The unscoped relation.
+        #
+        # @since 2.4.0
+        def unscoped
+          klass.criteria(true, false).tap do |criterion|
+            criterion.documents = _unscoped
           end
         end
 
@@ -271,6 +345,7 @@ module Mongoid # :nodoc:
         # @since 2.0.0.rc.1
         def append(document)
           target.push(document)
+          _unscoped.push(document)
           integrate(document)
           document._index = target.size - 1
         end
@@ -342,7 +417,7 @@ module Mongoid # :nodoc:
         #
         # @since 2.1.0
         def persistable?
-          base.persisted? && !binding?
+          base.persisted? && !_binding?
         end
 
         # Reindex all the target elements. This is useful when performing
@@ -354,9 +429,27 @@ module Mongoid # :nodoc:
         #
         # @since 2.0.0.rc.1
         def reindex
-          target.each_with_index do |doc, index|
+          _unscoped.each_with_index do |doc, index|
             doc._index = index
           end
+        end
+
+        # Apply the metadata ordering or the default scoping to the provided
+        # documents.
+        #
+        # @example Apply scoping.
+        #   person.addresses.scope(target)
+        #
+        # @param [ Array<Document> ] docs The documents to scope.
+        #
+        # @return [ Array<Document> ] The scoped docs.
+        #
+        # @since 2.4.0
+        def scope(docs)
+          return docs unless metadata.order || metadata.klass.default_scoping?
+          metadata.klass.criteria(true).order_by(metadata.order).tap do |crit|
+            crit.documents = docs
+          end.entries
         end
 
         # Remove all documents from the relation, either with a delete or a
@@ -370,15 +463,42 @@ module Mongoid # :nodoc:
         #
         # @return [ Integer ] The number of documents removed.
         def remove_all(conditions = {}, method = :delete)
-          criteria = find(:all, conditions || {})
+          criteria = where(conditions || {})
           criteria.size.tap do
             criteria.each do |doc|
               target.delete_one(doc)
-              doc.send(method, :suppress => true)
+              _unscoped.delete_one(doc)
+              doc.send(method, :suppress => true) unless _assigning?
               unbind_one(doc)
             end
             reindex
           end
+        end
+
+        # Get the internal unscoped documents.
+        #
+        # @example Get the unscoped documents.
+        #   relation._unscoped
+        #
+        # @return [ Array<Document> ] The unscoped documents.
+        #
+        # @since 2.4.0
+        def _unscoped
+          @_unscoped ||= []
+        end
+
+        # Set the internal unscoped documents.
+        #
+        # @example Set the unscoped documents.
+        #   relation._unscoped = docs
+        #
+        # @param [ Array<Document> ] docs The documents.
+        #
+        # @return [ Array<Document ] The unscoped docs.
+        #
+        # @since 2.4.0
+        def _unscoped=(docs)
+          @_unscoped = docs
         end
 
         class << self
@@ -389,6 +509,7 @@ module Mongoid # :nodoc:
           # @example Get the builder.
           #   Embedded::Many.builder(meta, object)
           #
+          # @param [ Document ] base The base document.
           # @param [ Metadata ] meta The metadata of the relation.
           # @param [ Document, Hash ] object A document or attributes to build
           #   with.
@@ -396,8 +517,8 @@ module Mongoid # :nodoc:
           # @return [ Builder ] A newly instantiated builder object.
           #
           # @since 2.0.0.rc.1
-          def builder(meta, object, loading = false)
-            Builders::Embedded::Many.new(meta, object, loading)
+          def builder(base, meta, object)
+            Builders::Embedded::Many.new(base, meta, object)
           end
 
           # Returns true if the relation is an embedded one. In this case
@@ -489,7 +610,20 @@ module Mongoid # :nodoc:
           #
           # @since 2.1.0
           def valid_options
-            [ :as, :cyclic, :order, :versioned ]
+            [ :as, :cascade_callbacks, :cyclic, :order, :versioned ]
+          end
+
+          # Get the default validation setting for the relation. Determines if
+          # by default a validates associated will occur.
+          #
+          # @example Get the validation default.
+          #   Proxy.validation_default
+          #
+          # @return [ true, false ] The validation default.
+          #
+          # @since 2.1.9
+          def validation_default
+            true
           end
         end
       end

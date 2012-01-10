@@ -17,7 +17,7 @@ describe Mongoid::Relations::Referenced::Many do
     end
 
     it "returns the embedded in builder" do
-      described_class.builder(metadata, document).should
+      described_class.builder(nil, metadata, document).should
         be_a_kind_of(builder_klass)
     end
   end
@@ -38,8 +38,8 @@ describe Mongoid::Relations::Referenced::Many do
 
   describe ".macro" do
 
-    it "returns references_many" do
-      described_class.macro.should == :references_many
+    it "returns has_many" do
+      described_class.macro.should == :has_many
     end
   end
 
@@ -96,6 +96,13 @@ describe Mongoid::Relations::Referenced::Many do
     it "returns the valid options" do
       described_class.valid_options.should ==
         [ :as, :autosave, :dependent, :foreign_key, :order ]
+    end
+  end
+
+  describe ".validation_default" do
+
+    it "returns true" do
+      described_class.validation_default.should eq(true)
     end
   end
 end

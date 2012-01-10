@@ -58,12 +58,12 @@ describe Mongoid::Relations::AutoSave do
 
           before do
             person.save
-            person.drugs.build(:name => "Percocet")
+            person.drugs << drug
             person.save
           end
 
-          it "does not save the relation" do
-            drug.should_not be_persisted
+          it "saves the relation" do
+            drug.should be_persisted
           end
         end
       end
@@ -90,12 +90,12 @@ describe Mongoid::Relations::AutoSave do
 
           before do
             person.save
-            person.build_account(:name => "Test")
+            person.account = account
             person.save
           end
 
-          it "does not save the relation" do
-            account.should_not be_persisted
+          it "saves the relation" do
+            account.should be_persisted
           end
         end
       end

@@ -30,14 +30,15 @@ module Mongoid # :nodoc:
               args.flatten.each do |doc|
                 next unless doc
                 append(doc)
-                if persistable?
+                if persistable? || _creating?
                   ids.push(doc.id)
                   doc.save
                 else
                   base.send(metadata.foreign_key).push(doc.id)
+                  base.synced[metadata.foreign_key] = false
                 end
               end
-              if persistable?
+              if persistable? || _creating?
                 base.push_all(metadata.foreign_key, ids)
                 base.synced[metadata.foreign_key] = false
               end
@@ -53,63 +54,32 @@ module Mongoid # :nodoc:
         # @example Build a new document on the relation.
         #   person.posts.build(:title => "A new post")
         #
-        # @param [ Hash ] attributes The attributes of the new document.
-        # @param [ Class ] type The optional subclass to build.
+        # @overload build(attributes = {}, options = {}, type = nil)
+        #   @param [ Hash ] attributes The attributes of the new document.
+        #   @param [ Hash ] options The scoped assignment options.
+        #   @param [ Class ] type The optional subclass to build.
+        #
+        # @overload build(attributes = {}, type = nil)
+        #   @param [ Hash ] attributes The attributes of the new document.
+        #   @param [ Hash ] options The scoped assignment options.
+        #   @param [ Class ] type The optional subclass to build.
         #
         # @return [ Document ] The new document.
         #
         # @since 2.0.0.beta.1
-        def build(attributes = {}, type = nil)
-          Factory.build(type || klass, attributes).tap do |doc|
+        def build(attributes = {}, options = {}, type = nil)
+          if options.is_a? Class
+            options, type = {}, options
+          end
+
+          Factory.build(type || klass, attributes, options).tap do |doc|
             base.send(metadata.foreign_key).push(doc.id)
             append(doc)
+            doc.synced[metadata.inverse_foreign_key] = false
             yield(doc) if block_given?
           end
         end
         alias :new :build
-
-        # Creates a new document on the references many relation. This will
-        # save the document if the parent has been persisted.
-        #
-        # @example Create and save the new document.
-        #   person.posts.create(:text => "Testing")
-        #
-        # @param [ Hash ] attributes The attributes to create with.
-        # @param [ Class ] type The optional type of document to create.
-        #
-        # @return [ Document ] The newly created document.
-        #
-        # @since 2.0.0.beta.1
-        def create(attributes = nil, type = nil, &block)
-          super.tap do |doc|
-            base.send(metadata.foreign_key).delete_one(doc.id)
-            base.push(metadata.foreign_key, doc.id)
-            base.synced[metadata.foreign_key] = false
-          end
-        end
-
-        # Creates a new document on the references many relation. This will
-        # save the document if the parent has been persisted and will raise an
-        # error if validation fails.
-        #
-        # @example Create and save the new document.
-        #   person.posts.create!(:text => "Testing")
-        #
-        # @param [ Hash ] attributes The attributes to create with.
-        # @param [ Class ] type The optional type of document to create.
-        #
-        # @raise [ Errors::Validations ] If validation failed.
-        #
-        # @return [ Document ] The newly created document.
-        #
-        # @since 2.0.0.beta.1
-        def create!(attributes = nil, type = nil, &block)
-          super.tap do |doc|
-            base.send(metadata.foreign_key).delete_one(doc.id)
-            base.push(metadata.foreign_key, doc.id)
-            base.synced[metadata.foreign_key] = false
-          end
-        end
 
         # Delete the document from the relation. This will set the foreign key
         # on the document to nil. If the dependent options on the relation are
@@ -132,36 +102,6 @@ module Mongoid # :nodoc:
           end
         end
 
-        # Instantiate a new references_many relation. Will set the foreign key
-        # and the base on the inverse object.
-        #
-        # @example Create the new relation.
-        #   Referenced::Many.new(base, target, metadata)
-        #
-        # @param [ Document ] base The document this relation hangs off of.
-        # @param [ Array<Document> ] target The target of the relation.
-        # @param [ Metadata ] metadata The relation's metadata.
-        #
-        # @since 2.0.0.beta.1
-        def initialize(base, target, metadata)
-          init(base, Targets::Enumerable.new(target), metadata) do |proxy|
-            raise_mixed if klass.embedded?
-            batched do
-              proxy.in_memory do |doc|
-                characterize_one(doc)
-                bind_one(doc)
-                if persistable?
-                  base.push(metadata.foreign_key, doc.id)
-                  base.synced[metadata.foreign_key] = false
-                  doc.save
-                else
-                  base.send(metadata.foreign_key).push(doc.id)
-                end
-              end
-            end
-          end
-        end
-
         # Removes all associations between the base document and the target
         # documents by deleting the foreign keys and the references, orphaning
         # the target documents in the process.
@@ -171,8 +111,10 @@ module Mongoid # :nodoc:
         #
         # @since 2.0.0.rc.1
         def nullify
-          criteria.pull(metadata.inverse_foreign_key, base.id)
-          unless base.destroyed?
+          unless metadata.forced_nil_inverse?
+            criteria.pull(metadata.inverse_foreign_key, base.id)
+          end
+          if persistable?
             base.set(
               metadata.foreign_key,
               base.send(metadata.foreign_key).clear
@@ -184,6 +126,41 @@ module Mongoid # :nodoc:
         end
         alias :nullify_all :nullify
         alias :clear :nullify
+        alias :purge :nullify
+
+        # Substitutes the supplied target documents for the existing documents
+        # in the relation. If the new target is nil, perform the necessary
+        # deletion.
+        #
+        # @example Replace the relation.
+        # person.preferences.substitute([ new_post ])
+        #
+        # @param [ Array<Document> ] replacement The replacement target.
+        #
+        # @return [ Many ] The relation.
+        #
+        # @since 2.0.0.rc.1
+        def substitute(replacement)
+          tap do |proxy|
+            if replacement != proxy.in_memory
+              proxy.purge
+              proxy.push(replacement.compact.uniq) if replacement
+            end
+          end
+        end
+
+        # Get a criteria for the documents without the default scoping
+        # applied.
+        #
+        # @example Get the unscoped criteria.
+        #   person.preferences.unscoped
+        #
+        # @return [ Criteria ] The unscoped criteria.
+        #
+        # @since 2.4.0
+        def unscoped
+          klass.unscoped.any_in(:_id => base.send(metadata.foreign_key))
+        end
 
         private
 
@@ -233,6 +210,7 @@ module Mongoid # :nodoc:
           # @example Get the builder.
           #   Referenced::ManyToMany.builder(meta, object)
           #
+          # @param [ Document ] base The base document.
           # @param [ Metadata ] meta The metadata of the relation.
           # @param [ Document, Hash ] object A document or attributes to build
           #   with.
@@ -240,12 +218,41 @@ module Mongoid # :nodoc:
           # @return [ Builder ] A new builder object.
           #
           # @since 2.0.0.rc.1
-          def builder(meta, object, loading = false)
-            Builders::Referenced::ManyToMany.new(meta, object, loading)
+          def builder(base, meta, object)
+            Builders::Referenced::ManyToMany.new(base, meta, object)
           end
 
+          # Create the standard criteria for this relation given the supplied
+          # metadata and object.
+          #
+          # @example Get the criteria.
+          #   Proxy.criteria(meta, object)
+          #
+          # @param [ Metadata ] metadata The relation metadata.
+          # @param [ Object ] object The object for the criteria.
+          # @param [ Class ] type The criteria class.
+          #
+          # @return [ Criteria ] The criteria.
+          #
+          # @since 2.1.0
           def criteria(metadata, object, type = nil)
             metadata.klass.any_in(:_id => object)
+          end
+
+          # Get the criteria that is used to eager load a relation of this
+          # type.
+          #
+          # @example Get the eager load criteria.
+          #   Proxy.eager_load(metadata, criteria)
+          #
+          # @param [ Metadata ] metadata The relation metadata.
+          # @param [ Criteria ] criteria The criteria being used.
+          #
+          # @return [ Criteria ] The criteria to eager load the relation.
+          #
+          # @since 2.2.0
+          def eager_load(metadata, criteria)
+            raise Errors::EagerLoad.new(metadata.name)
           end
 
           # Returns true if the relation is an embedded one. In this case
@@ -291,9 +298,9 @@ module Mongoid # :nodoc:
           # @example Get the macro.
           #   Referenced::ManyToMany.macro
           #
-          # @return [ Symbol ] :references_and_referenced_in_many
+          # @return [ Symbol ] :has_and_belongs_to_many
           def macro
-            :references_and_referenced_in_many
+            :has_and_belongs_to_many
           end
 
           # Return the nested builder that is responsible for generating the documents
@@ -359,6 +366,19 @@ module Mongoid # :nodoc:
           # @since 2.1.0
           def valid_options
             [ :autosave, :dependent, :foreign_key, :index, :order ]
+          end
+
+          # Get the default validation setting for the relation. Determines if
+          # by default a validates associated will occur.
+          #
+          # @example Get the validation default.
+          #   Proxy.validation_default
+          #
+          # @return [ true, false ] The validation default.
+          #
+          # @since 2.1.9
+          def validation_default
+            true
           end
         end
       end

@@ -15,11 +15,22 @@ module Rails #:nodoc:
     #
     # @since 2.1.0
     def create_indexes(pattern)
+      logger = Logger.new($stdout)
       Dir.glob(pattern).each do |file|
-        model = determine_model(file)
-        if model
-          Logger.new($stdout).info("Generating indexes for #{model}")
-          model.create_indexes
+        logger = Logger.new($stdout)
+        begin
+          model = determine_model(file)
+          if model
+            model.create_indexes
+            logger.info("Generated indexes for #{model}")
+          else
+            logger.info("Not a Mongoid parent model: #{file}")
+          end
+        rescue => e
+          logger.error %Q{Failed to create indexes for #{model}:
+            #{e.class}:#{e.message}
+            #{e.backtrace.join("\n")}
+          }
         end
       end
     end
@@ -33,12 +44,19 @@ module Rails #:nodoc:
     #
     # @param [ Application ] app The rails application.
     def load_models(app)
-      return unless ::Mongoid.preload_models
       app.config.paths["app/models"].each do |path|
         Dir.glob("#{path}/**/*.rb").sort.each do |file|
           load_model(file.gsub("#{path}/" , "").gsub(".rb", ""))
         end
       end
+    end
+
+    # Conditionally calls `Rails::Mongoid.load_models(app)` if the
+    # `::Mongoid.preload_models` is `true`.
+    #
+    # @param [ Application ] app The rails application.
+    def preload_models(app)
+      load_models(app) if ::Mongoid.preload_models
     end
 
     private
@@ -67,13 +85,12 @@ module Rails #:nodoc:
     #
     # @since 2.1.0
     def determine_model(file)
-      model_path = file[0..-4].split('/')[2..-1]
-      begin
+      if file =~ /app\/models\/(.*).rb$/
+        model_path = $1.split('/')
         klass = model_path.map { |path| path.camelize }.join('::').constantize
         if klass.ancestors.include?(::Mongoid::Document) && !klass.embedded
           return klass
         end
-      rescue => e
       end
     end
   end

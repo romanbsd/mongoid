@@ -40,7 +40,6 @@ module Mongoid # :nodoc:
         def substitute(replacement)
           tap do |proxy|
             proxy.unbind_one
-            proxy.target.delete if persistable?
             return nil unless replacement
             proxy.target = replacement
             proxy.bind_one
@@ -72,7 +71,7 @@ module Mongoid # :nodoc:
         #
         # @since 2.1.0
         def persistable?
-          target.persisted? && !binding? && !building?
+          target.persisted? && !_binding? && !_building?
         end
 
         class << self
@@ -83,6 +82,7 @@ module Mongoid # :nodoc:
           # @example Get the builder.
           #   Referenced::In.builder(meta, object)
           #
+          # @param [ Document ] base The base document.
           # @param [ Metadata ] meta The metadata of the relation.
           # @param [ Document, Hash ] object A document or attributes to build
           #   with.
@@ -90,8 +90,8 @@ module Mongoid # :nodoc:
           # @return [ Builder ] A new builder object.
           #
           # @since 2.0.0.rc.1
-          def builder(meta, object, loading = false)
-            Builders::Referenced::In.new(meta, object, loading)
+          def builder(base, meta, object)
+            Builders::Referenced::In.new(base, meta, object)
           end
 
           # Get the standard criteria used for querying this relation.
@@ -108,6 +108,26 @@ module Mongoid # :nodoc:
           # @since 2.1.0
           def criteria(metadata, object, type = nil)
             type.where(:_id => object)
+          end
+
+          # Get the criteria that is used to eager load a relation of this
+          # type.
+          #
+          # @example Get the eager load criteria.
+          #   Proxy.eager_load(metadata, criteria)
+          #
+          # @param [ Metadata ] metadata The relation metadata.
+          # @param [ Array<Object> ] ids The ids of the target docs.
+          #
+          # @return [ Criteria ] The criteria to eager load the relation.
+          #
+          # @since 2.2.0
+          def eager_load(metadata, ids)
+            raise Errors::EagerLoad.new(metadata.name) if metadata.polymorphic?
+            klass, foreign_key = metadata.klass, metadata.foreign_key
+            klass.any_in("_id" => ids).each do |doc|
+              IdentityMap.set(doc)
+            end
           end
 
           # Returns true if the relation is an embedded one. In this case
@@ -153,9 +173,9 @@ module Mongoid # :nodoc:
           # @example Get the macro.
           #   Referenced::In.macro
           #
-          # @return [ Symbol ] :referenced_in
+          # @return [ Symbol ] :belongs_to
           def macro
-            :referenced_in
+            :belongs_to
           end
 
           # Return the nested builder that is responsible for generating the documents
@@ -221,6 +241,19 @@ module Mongoid # :nodoc:
           # @since 2.1.0
           def valid_options
             [ :autosave, :foreign_key, :index, :polymorphic ]
+          end
+
+          # Get the default validation setting for the relation. Determines if
+          # by default a validates associated will occur.
+          #
+          # @example Get the validation default.
+          #   Proxy.validation_default
+          #
+          # @return [ true, false ] The validation default.
+          #
+          # @since 2.1.9
+          def validation_default
+            false
           end
         end
       end

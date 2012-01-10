@@ -5,6 +5,7 @@ module Mongoid # :nodoc:
     # This class is the superclass for all relation proxy objects, and contains
     # common behaviour for all of them.
     class Proxy
+      include Threaded::Lifecycle
 
       # We undefine most methods to get them sent through to the target.
       instance_methods.each do |method|
@@ -16,7 +17,6 @@ module Mongoid # :nodoc:
 
       # Backwards compatibility with Mongoid beta releases.
       delegate :klass, :to => :metadata
-
       delegate :bind_one, :unbind_one, :to => :binding
 
       # Convenience for setting the target and the metadata properties since
@@ -36,31 +36,20 @@ module Mongoid # :nodoc:
         extend metadata.extension if metadata.extension?
       end
 
+      # The default substitutable object for a relation proxy is the clone of
+      # the target.
+      #
+      # @example Get the substitutable.
+      #   proxy.substitutable
+      #
+      # @return [ Object ] A clone of the target.
+      #
+      # @since 2.1.6
+      def substitutable
+        target
+      end
+
       protected
-
-      # Is the current thread in binding mode?
-      #
-      # @example Is the current thread in binding mode?
-      #   proxy.binding?
-      #
-      # @return [ true, false ] If the thread is binding.
-      #
-      # @since 2.1.0
-      def binding?
-        Threaded.binding?
-      end
-
-      # Is the current thread in building mode?
-      #
-      # @example Is the current thread in building mode?
-      #   proxy.building?
-      #
-      # @return [ true, false ] If the thread is building.
-      #
-      # @since 2.1.0
-      def building?
-        Threaded.building?
-      end
 
       # Get the collection from the root of the hierarchy.
       #
@@ -138,6 +127,18 @@ module Mongoid # :nodoc:
       # @since 2.0.0.rc.6
       def raise_unsaved(doc)
         raise Errors::UnsavedDocument.new(base, doc)
+      end
+
+      # Get the class of the root document in the hierarchy.
+      #
+      # @example Get the root's class.
+      #   proxy.root_class
+      #
+      # @return [ Class ] The root class.
+      #
+      # @since 2.1.8
+      def root_class
+        @root_class ||= base._root.class
       end
     end
   end

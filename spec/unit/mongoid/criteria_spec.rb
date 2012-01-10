@@ -403,7 +403,7 @@ describe Mongoid::Criteria do
   describe "#clone" do
 
     let(:criteria) do
-      Person.only(:title).where(:age.gt => 30).skip(10)
+      Person.only(:title).where(:age.gt => 30).skip(10).asc(:age)
     end
 
     let(:copy) do
@@ -923,7 +923,7 @@ describe Mongoid::Criteria do
 
   end
 
-  describe "#scoped" do
+  describe "#as_conditions" do
 
     context "when the options contain sort criteria" do
 
@@ -932,142 +932,9 @@ describe Mongoid::Criteria do
       end
 
       it "changes sort to order_by" do
-        criteria.scoped.should == { :where => { :title => "Sir" }, :order_by => [[:score, :asc]] }
-      end
-    end
-  end
-
-  describe "#search" do
-
-    let(:criteria) do
-      Person.criteria
-    end
-
-    context "with a single argument" do
-
-      context "when the arg is a string" do
-
-        let(:id) do
-          BSON::ObjectId.new.to_s
-        end
-
-        it "adds the id selector" do
-          criteria.search(id)[1].selector.should == { :_id => BSON::ObjectId.from_string(id) }
-        end
-      end
-
-      context "when the arg is an object id" do
-
-        let(:id) do
-          BSON::ObjectId.new
-        end
-
-        it "adds the id selector" do
-          criteria.search(id)[1].selector.should == { :_id => id }
-        end
-      end
-    end
-
-    context "multiple arguments" do
-
-      context "when an array of ids" do
-
-        let(:ids) do
-          []
-        end
-
-        before do
-          3.times do
-            ids << BSON::ObjectId.new
-          end
-        end
-
-        it "delegates to #id_criteria" do
-          criteria.search(ids.map(&:to_s))[1].selector.should ==
-            { :_id => { "$in" => ids } }
-        end
-      end
-
-      context "when Person, :conditions => {}" do
-
-        let(:crit) do
-          criteria.search(:all, :conditions => { :title => "Test" })[1]
-        end
-
-        it "returns a criteria with a selector from the conditions" do
-          crit.selector.should == { :title => "Test" }
-        end
-
-        it "returns a criteria with klass Person" do
-          crit.klass.should == Person
-        end
-      end
-
-      context "when Person, :conditions => {:id => id}" do
-
-        let(:id) do
-          BSON::ObjectId.new
-        end
-
-        let(:crit) do
-          criteria.search(:all, :conditions => { :id => id })[1]
-        end
-
-        it "returns a criteria with a selector from the conditions" do
-          crit.selector.should == { :_id => id }
-        end
-
-        it "returns a criteria with klass Person" do
-          crit.klass.should == Person
-        end
-      end
-
-      context "when :all, :conditions => {}" do
-
-        let(:crit) do
-          criteria.search(:all, :conditions => { :title => "Test" })[1]
-        end
-
-        it "returns a criteria with a selector from the conditions" do
-          crit.selector.should == { :title => "Test" }
-        end
-
-        it "returns a criteria with klass Person" do
-          crit.klass.should == Person
-        end
-      end
-
-      context "when :last, :conditions => {}" do
-
-        let(:crit) do
-          criteria.search(:last, :conditions => { :title => "Test" })[1]
-        end
-
-        it "returns a criteria with a selector from the conditions" do
-          crit.selector.should == { :title => "Test" }
-        end
-
-        it "returns a criteria with klass Person" do
-          crit.klass.should == Person
-        end
-      end
-
-      context "when options are provided" do
-
-        let(:crit) do
-          criteria.search(
-            :all,
-            :conditions => { :title => "Test" }, :skip => 10
-          )[1]
-        end
-
-        it "sets the selector" do
-          crit.selector.should == { :title => "Test" }
-        end
-
-        it "sets the options" do
-          crit.options.should == { :skip => 10 }
-        end
+        criteria.as_conditions.should eq(
+          { :where => { :title => "Sir" }, :order_by => [[ :score, :asc ]] }
+        )
       end
     end
   end

@@ -24,8 +24,8 @@ module Mongoid #:nodoc:
       #
       # @since 2.0.0
       def criteria(embedded = false, scoped = true)
-        scope_stack.last || Criteria.new(self, embedded).tap do |crit|
-          return crit.fuse(default_scoping) if default_scoping && scoped
+        (scope_stack.last || Criteria.new(self, embedded)).tap do |crit|
+          return crit.apply_default_scope if scoped
         end
       end
 
@@ -56,7 +56,7 @@ module Mongoid #:nodoc:
         (class << self; self; end).class_eval <<-EOT
           def #{name}(*args)
             scope = scopes[:#{name}]
-            scope.extend(criteria.fuse(scope.conditions.scoped(*args)))
+            scope.extend(criteria.fuse(scope.conditions.as_conditions(*args)))
           end
         EOT
       end
@@ -73,7 +73,7 @@ module Mongoid #:nodoc:
       #
       # @since 2.0.0
       def scoped(embedded = false)
-        criteria(embedded, true)
+        criteria(embedded).scoped
       end
 
       # Initializes and returns the current scope stack.
@@ -99,7 +99,7 @@ module Mongoid #:nodoc:
       #
       # @since 2.0.0
       def unscoped(embedded = false)
-        criteria(embedded, false)
+        criteria(embedded).unscoped
       end
 
       # Pushes the provided criteria onto the scope stack, and removes it after the
@@ -123,12 +123,26 @@ module Mongoid #:nodoc:
         end
       end
 
-    protected
+      protected
 
+      # Warns or raises exception if overriding another scope or method.
+      #
+      # @example Warn or raise error if name exists.
+      #   Model.valid_scope_name?("test")
+      #
+      # @param [ String, Symbol ] name The name of the scope.
       def valid_scope_name?(name)
-        if !scopes[name] && respond_to?(name, true)
-          Mongoid.logger.warn "Creating scope :#{name}. " \
-                                    "Overwriting existing method #{self.name}.#{name}." if Mongoid.logger
+        if scopes[name] || respond_to?(name, true)
+          if Mongoid.scope_overwrite_exception
+            raise Errors::ScopeOverwrite.new(self.name,name)
+          else
+            if Mongoid.logger
+              Mongoid.logger.warn(
+                "Creating scope :#{name}. " +
+                "Overwriting existing method #{self.name}.#{name}."
+              )
+            end
+          end
         end
       end
     end

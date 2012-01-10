@@ -23,7 +23,7 @@ describe Mongoid::Relations::Embedded::Many do
   end
 
   let(:address) do
-    Address.new
+    Address.new(:street => "first")
   end
 
   let(:target) do
@@ -34,7 +34,7 @@ describe Mongoid::Relations::Embedded::Many do
     Person.relations["addresses"]
   end
 
-  [ :<<, :push, :concat ].each do |method|
+  [ :<<, :push ].each do |method|
 
     describe "##{method}" do
 
@@ -150,7 +150,7 @@ describe Mongoid::Relations::Embedded::Many do
     end
 
     it "returns the many builder" do
-      described_class.builder(metadata, document).should
+      described_class.builder(base, metadata, document).should
         be_a(Mongoid::Relations::Builders::Embedded::Many)
     end
   end
@@ -167,6 +167,52 @@ describe Mongoid::Relations::Embedded::Many do
 
     it "returns the number of persisted documents" do
       relation.count.should == 1
+    end
+  end
+
+  describe "#concat" do
+
+    let(:relation) do
+      described_class.new(base, target, metadata)
+    end
+
+    let(:document) do
+      Address.new(:street => "Bond St")
+    end
+
+    before do
+      relation.loaded = true
+      binding_klass.expects(:new).returns(binding)
+      binding.expects(:bind_one)
+    end
+
+    context "when the base is persisted" do
+
+      before do
+        base.expects(:persisted?).returns(true)
+        document.expects(:save).returns(true)
+        relation.concat([ document ])
+      end
+
+      it "appends the document to the target" do
+        relation.target.size.should == 2
+      end
+
+      it "adds the metadata to the target" do
+        document.metadata.should == metadata
+      end
+
+      it "indexes the target" do
+        document._index.should == 1
+      end
+    end
+
+    context "when the base is not persisted" do
+
+      it "does not save the target" do
+        document.expects(:save).never
+        relation.concat([ document ])
+      end
     end
   end
 
@@ -271,7 +317,7 @@ describe Mongoid::Relations::Embedded::Many do
         before do
           name = method.to_s.gsub("_all", "")
           document.expects(name)
-          relation.send(method, :conditions => { :street => "Folsom" })
+          relation.send(method, { :street => "Folsom" })
         end
 
         it "removes the matching documents" do
@@ -418,81 +464,6 @@ describe Mongoid::Relations::Embedded::Many do
         end
       end
     end
-
-    context "when finding first" do
-
-      context "when there is a match" do
-
-        let(:address) do
-          relation.find(:first, :conditions => { :city => "London" })
-        end
-
-        it "returns the first matching document" do
-          address.should == address_one
-        end
-      end
-
-      context "when there is no match" do
-
-        let(:address) do
-          relation.find(:first, :conditions => { :city => "Praha" })
-        end
-
-        it "returns nil" do
-          address.should be_nil
-        end
-      end
-    end
-
-    context "when finding last" do
-
-      context "when there is a match" do
-
-        let(:address) do
-          relation.find(:last, :conditions => { :city => "London" })
-        end
-
-        it "returns the last matching document" do
-          address.should == address_two
-        end
-      end
-
-      context "when there is no match" do
-
-        let(:address) do
-          relation.find(:last, :conditions => { :city => "Praha" })
-        end
-
-        it "returns nil" do
-          address.should be_nil
-        end
-      end
-    end
-
-    context "when finding all" do
-
-      context "when there is a match" do
-
-        let(:addresses) do
-          relation.find(:all, :conditions => { :city => "London" })
-        end
-
-        it "returns the matching documents" do
-          addresses.should == [ address_one, address_two ]
-        end
-      end
-
-      context "when there is no match" do
-
-        let(:address) do
-          relation.find(:all, :conditions => { :city => "Praha" })
-        end
-
-        it "returns an empty array" do
-          address.should be_empty
-        end
-      end
-    end
   end
 
   describe "#find_or_create_by" do
@@ -583,7 +554,7 @@ describe Mongoid::Relations::Embedded::Many do
   describe "#as_document" do
 
     it "returns an array of document hashes" do
-      relation.as_document.should == [ { "_id" => address.id } ]
+      relation.as_document.should == [ { "_id" => address.id, "street" => "first" } ]
     end
   end
 
@@ -591,7 +562,7 @@ describe Mongoid::Relations::Embedded::Many do
 
     it "returns the valid options" do
       described_class.valid_options.should ==
-        [ :as, :cyclic, :order, :versioned ]
+        [ :as, :cascade_callbacks, :cyclic, :order, :versioned ]
     end
   end
 
@@ -637,6 +608,13 @@ describe Mongoid::Relations::Embedded::Many do
 
     it "supports 'include_private = boolean'" do
       expect { addresses.respond_to?(:Rational, true) }.not_to raise_error
+    end
+  end
+
+  describe ".validation_default" do
+
+    it "returns true" do
+      described_class.validation_default.should eq(true)
     end
   end
 end

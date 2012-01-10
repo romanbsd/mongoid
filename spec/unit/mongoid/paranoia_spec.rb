@@ -25,13 +25,6 @@ describe Mongoid::Paranoia do
       command.expects(:persist).returns(true)
       post.delete!
     end
-
-    it "sets destroyed to true" do
-      remove_klass.expects(:new).with(post, {}).returns(command)
-      command.expects(:persist).returns(true)
-      post.delete!
-      post.should be_destroyed
-    end
   end
 
   describe "#destroyed?" do
@@ -76,14 +69,18 @@ describe Mongoid::Paranoia do
 
     it "updates the document in the datadase" do
       collection.expects(:update).with(
-        { :_id => post.id }, { "$set" => { :deleted_at => time } }
+        { "_id" => post.id },
+        { "$set" => { "deleted_at" => time } },
+        { :safe => false }
       ).returns(true)
       post.destroy
     end
 
     it "sets the deleted flag" do
       collection.expects(:update).with(
-        { :_id => post.id }, { "$set" => { :deleted_at => time } }
+        { "_id" => post.id },
+        { "$set" => { "deleted_at" => time } },
+        { :safe => false }
       ).returns(true)
       post.destroy
       post.should be_destroyed
@@ -107,14 +104,18 @@ describe Mongoid::Paranoia do
 
     it "sets the deleted_at flag in the database" do
       collection.expects(:update).with(
-        { :_id => post.id }, { "$set" => { :deleted_at => time } }
+        { "_id" => post.id },
+        { "$set" => { "deleted_at" => time } },
+        { :safe => false }
       ).returns(true)
       post.remove
     end
 
     it "sets the deleted flag" do
       collection.expects(:update).with(
-        { :_id => post.id }, { "$set" => { :deleted_at => time } }
+        { "_id" => post.id },
+        { "$set" => { "deleted_at" => time } },
+        { :safe => false }
       ).returns(true)
       post.remove
       post.should be_destroyed
@@ -138,14 +139,14 @@ describe Mongoid::Paranoia do
 
     it "removes the deleted_at flag from the database" do
       collection.expects(:update).with(
-        { :_id => post.id }, { "$unset" => { :deleted_at => true } }
+        { "_id" => post.id }, { "$unset" => { "deleted_at" => true } }
       ).returns(true)
       post.restore
     end
 
     it "removes the deleted flag" do
       collection.expects(:update).with(
-        { :_id => post.id }, { "$unset" => { :deleted_at => true } }
+        { "_id" => post.id }, { "$unset" => { "deleted_at" => true } }
       ).returns(true)
       post.restore
       post.should_not be_destroyed
@@ -183,7 +184,7 @@ describe Mongoid::Paranoia do
       end
 
       it "returns a scoped criteria" do
-        criteria.selector.should eq({ :deleted_at => { "$exists" => false }})
+        criteria.selector.should eq({ :deleted_at => nil })
       end
     end
 
@@ -206,7 +207,7 @@ describe Mongoid::Paranoia do
     end
 
     it "returns a scoped criteria" do
-      scoped.selector.should eq({ :deleted_at => { "$exists" => false }})
+      scoped.selector.should eq({ :deleted_at => nil })
     end
   end
 

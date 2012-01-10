@@ -2,12 +2,21 @@ en:
   mongoid:
     errors:
       messages:
+        blank:
+          can't be blank
         taken:
           is already taken
+        callbacks:
+          "Calling %{method} on %{klass} resulted in a false return from a callback."
         document_not_found:
           Document not found for class %{klass} with id(s) %{identifiers}.
+        eager_load:
+          "Eager loading :%{name} is not supported due to it being a many-to-many
+          or polymorphic belongs_to relation."
         invalid_database:
           "Database should be a Mongo::DB, not %{name}."
+        invalid_time:
+          "'%{value}' is not a valid Time."
         invalid_options:
           "Invalid option :%{invalid} provided to relation :%{name}. Valid options
           are: %{valid}."
@@ -26,7 +35,7 @@ en:
         invalid_field:
           Defining a field named %{name} is not allowed. Do not define
           fields that conflict with Mongoid internal attributes or method
-          names. Use Document#instance_methods to see what names this includes.
+          names. Use Mongoid.destructive_fields to see what names this includes.
         too_many_nested_attribute_records:
           Accepting nested attributes for %{association} is limited
           to %{limit} records.
@@ -46,3 +55,9 @@ en:
         mixed_relations:
           Referencing a(n) %{embedded} document from the %{root} document via a
           relational association is not allowed since the %{embedded} is embedded.
+        no_environment:
+          "Mongoid attempted to find the appropriate environment but no Rails.env,
+          Sinatra::Base.environment, or RACK_ENV could be found."
+        scope_overwrite:
+          "Cannot create scope :%{scope_name}, because of existing method
+          %{model_name}.%{scope_name}."

@@ -6,8 +6,8 @@ require "mongoid/criterion/exclusion"
 require "mongoid/criterion/inclusion"
 require "mongoid/criterion/inspection"
 require "mongoid/criterion/optional"
+require "mongoid/criterion/scoping"
 require "mongoid/criterion/selector"
-require "mongoid/criterion/unconvertable"
 
 module Mongoid #:nodoc:
 
@@ -30,9 +30,9 @@ module Mongoid #:nodoc:
     include Criterion::Inclusion
     include Criterion::Inspection
     include Criterion::Optional
+    include Criterion::Scoping
 
     attr_accessor \
-      :collection,
       :documents,
       :embedded,
       :ids,
@@ -109,6 +109,18 @@ module Mongoid #:nodoc:
       end
     end
 
+    # Get the collection associated with the criteria.
+    #
+    # @example Get the collection.
+    #   criteria.collection
+    #
+    # @return [ Collection ] The collection.
+    #
+    # @since 2.2.0
+    def collection
+      klass.collection
+    end
+
     # Return or create the context in which this criteria should be executed.
     #
     # This will return an Enumerable context if the class is embedded,
@@ -143,6 +155,19 @@ module Mongoid #:nodoc:
       context.count > 0
     end
 
+    # Extract a single id from the provided criteria. Could be in an $and
+    # query or a straight _id query.
+    #
+    # @example Extract the id.
+    #   criteria.extract_id
+    #
+    # @return [ Object ] The id.
+    #
+    # @since 2.3.0
+    def extract_id
+      selector[:_id]
+    end
+
     # When freezing a criteria we need to initialize the context first
     # otherwise the setting of the context on attempted iteration will raise a
     # runtime error.
@@ -154,7 +179,7 @@ module Mongoid #:nodoc:
     #
     # @since 2.0.0
     def freeze
-      context and super
+      context and inclusions and super
     end
 
     # Merges the supplied argument hash into a single criteria
@@ -184,9 +209,10 @@ module Mongoid #:nodoc:
       @options, @klass, @documents, @embedded = {}, klass, [], embedded
     end
 
-    # Merges another object into this +Criteria+. The other object may be a
-    # +Criteria+ or a +Hash+. This is used to combine multiple scopes together,
-    # where a chained scope situation may be desired.
+    # Merges another object with this +Criteria+ and returns a new criteria.
+    # The other object may be a +Criteria+ or a +Hash+. This is used to
+    # combine multiple scopes together, where a chained scope situation
+    # may be desired.
     #
     # @example Merge the criteria with a conditions hash.
     #   criteria.merge({ :conditions => { :title => "Sir" } })
@@ -229,10 +255,10 @@ module Mongoid #:nodoc:
     # scope for use with named scopes.
     #
     # @example Get the criteria as a scoped hash.
-    #   criteria.scoped
+    #   criteria.as_conditions
     #
     # @return [ Hash ] The criteria as a scoped hash.
-    def scoped
+    def as_conditions
       scope_options = @options.dup
       sorting = scope_options.delete(:sort)
       scope_options[:order_by] = sorting if sorting
@@ -252,43 +278,6 @@ module Mongoid #:nodoc:
       entries.as_json(options)
     end
 
-    # Search for documents based on a variety of args.
-    #
-    # @example Find by an id.
-    #   criteria.search(BSON::ObjectId.new)
-    #
-    # @example Find by multiple ids.
-    #   criteria.search([ BSON::ObjectId.new, BSON::ObjectId.new ])
-    #
-    # @example Conditionally find all matching documents.
-    #   criteria.search(:all, :conditions => { :title => "Sir" })
-    #
-    # @example Conditionally find the first document.
-    #   criteria.search(:first, :conditions => { :title => "Sir" })
-    #
-    # @example Conditionally find the last document.
-    #   criteria.search(:last, :conditions => { :title => "Sir" })
-    #
-    # @param [ Symbol, BSON::ObjectId, Array<BSON::ObjectId> ] arg The
-    #   argument to search with.
-    # @param [ Hash ] options The options to search with.
-    #
-    # @return [ Array<Symbol, Criteria> ] The type and criteria.
-    #
-    # @since 2.0.0
-    def search(*args)
-      raise_invalid if args[0].nil?
-      type = args[0]
-      params = args[1] || {}
-      return [ :ids, for_ids(type) ] unless type.is_a?(Symbol)
-      conditions = params.delete(:conditions) || {}
-      if conditions.include?(:id)
-        conditions[:_id] = conditions[:id]
-        conditions.delete(:id)
-      end
-      return [ type, where(conditions).extras(params) ]
-    end
-
     # Convenience method of raising an invalid options error.
     #
     # @example Raise the error.
@@ -298,7 +287,7 @@ module Mongoid #:nodoc:
     #
     # @since 2.0.0
     def raise_invalid
-      raise Errors::InvalidOptions.new(:calling_document_find_with_nil_is_invalid, {})
+      raise Errors::InvalidFind.new
     end
 
     protected
@@ -316,6 +305,18 @@ module Mongoid #:nodoc:
       other.is_a?(Criteria) ? other.entries : other
     end
 
+    # Get the raw driver collection from the criteria.
+    #
+    # @example Get the raw driver collection.
+    #   criteria.driver
+    #
+    # @return [ Mongo::Collection ] The driver collection.
+    #
+    # @since 2.2.0
+    def driver
+      collection.driver
+    end
+
     # Clone or dup the current +Criteria+. This will return a new criteria with
     # the selector, options, klass, embedded options, etc intact.
     #
@@ -331,6 +332,7 @@ module Mongoid #:nodoc:
     def initialize_copy(other)
       @selector = other.selector.dup
       @options = other.options.dup
+      @includes = other.inclusions.dup
       @context = nil
     end
 
@@ -359,14 +361,19 @@ module Mongoid #:nodoc:
       clone.tap do |crit|
         converted = BSON::ObjectId.convert(klass, attributes || {})
         converted.each_pair do |key, value|
-          unless crit.selector[key]
+          existing = crit.selector[key]
+          unless existing
             crit.selector[key] = { operator => value }
           else
-            if crit.selector[key].has_key?(operator)
-              new_value = crit.selector[key].values.first.send(combine, value)
-              crit.selector[key] = { operator => new_value }
+            if existing.respond_to?(:merge)
+              if existing.has_key?(operator)
+                new_value = existing.values.first.send(combine, value)
+                crit.selector[key] = { operator => new_value }
+              else
+                crit.selector[key][operator] = value
+              end
             else
-              crit.selector[key][operator] = value
+              crit.selector[key] = { operator => value }
             end
           end
         end

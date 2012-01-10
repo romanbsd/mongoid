@@ -28,7 +28,12 @@ module Mongoid #:nodoc:
     #
     # @return [ true, false ] True if successful, false if not.
     def destroy(options = {})
-      run_callbacks(:destroy) { remove(options) }
+      self.flagged_for_destroy = true
+      run_callbacks(:destroy) do
+        remove(options)
+      end.tap do
+        self.flagged_for_destroy = false
+      end
     end
 
     # Insert a new document into the database. Will return the document
@@ -67,7 +72,11 @@ module Mongoid #:nodoc:
     #
     # @return [ true, false ] True if validation passed.
     def save!(options = {})
-      self.class.fail_validate!(self) unless upsert(options); true
+      unless upsert(options)
+        self.class.fail_validate!(self) if errors.any?
+        self.class.fail_callback!(self, :save!)
+      end
+      return true
     end
 
     # Update the document in the datbase.
@@ -124,7 +133,10 @@ module Mongoid #:nodoc:
     # @return [ true, false ] True if validation passed.
     def update_attributes!(attributes = {})
       update_attributes(attributes).tap do |result|
-        self.class.fail_validate!(self) unless result
+        unless result
+          self.class.fail_validate!(self) if errors.any?
+          self.class.fail_callback!(self, :update_attributes!)
+        end
       end
     end
 
@@ -156,10 +168,14 @@ module Mongoid #:nodoc:
       #   Person.create(:title => "Mr")
       #
       # @param [ Hash ] attributes The attributes to create with.
+      # @param [ Hash ] options A mass-assignment protection options. Supports
+      #   :as and :without_protection
       #
       # @return [ Document ] The newly created document.
-      def create(attributes = {}, &block)
-        new(attributes, &block).tap { |doc| doc.save }
+      def create(attributes = {}, options = {}, &block)
+        _creating do
+          new(attributes, options, &block).tap { |doc| doc.save }
+        end
       end
 
       # Create a new document. This will instantiate a new document and
@@ -171,12 +187,17 @@ module Mongoid #:nodoc:
       #   Person.create!(:title => "Mr")
       #
       # @param [ Hash ] attributes The attributes to create with.
+      # @param [ Hash ] options A mass-assignment protection options. Supports
+      #   :as and :without_protection
       #
       # @return [ Document ] The newly created document.
-      def create!(attributes = {}, &block)
-        document = new(attributes, &block)
-        fail_validate!(document) if document.insert.errors.any?
-        document
+      def create!(attributes = {}, options = {}, &block)
+        _creating do
+          new(attributes, options, &block).tap do |doc|
+            fail_validate!(doc) if doc.insert.errors.any?
+            fail_callback!(doc, :create!) if doc.new_record?
+          end
+        end
       end
 
       # Delete all documents given the supplied conditions. If no conditions
@@ -193,11 +214,12 @@ module Mongoid #:nodoc:
       #
       # @return [ Integer ] The number of documents deleted.
       def delete_all(conditions = nil)
-        selector = (conditions || {})[:conditions] || {}
+        conds = conditions || {}
+        selector = conds[:conditions] || conds
         selector.merge!(:_type => name) if hereditary?
         collection.find(selector).count.tap do
           collection.remove(selector, Safety.merge_safety_options)
-          Threaded.clear_safety_options!
+          Threaded.clear_options!
         end
       end
 
@@ -214,8 +236,9 @@ module Mongoid #:nodoc:
       # @param [ Hash ] conditions Optional conditions to destroy by.
       #
       # @return [ Integer ] The number of documents destroyed.
-      def destroy_all(conditions = {})
-        documents = all(conditions)
+      def destroy_all(conditions = nil)
+        conds = conditions || {}
+        documents = where(conds[:conditions] || conds)
         documents.count.tap do
           documents.each { |doc| doc.destroy }
         end
@@ -229,6 +252,19 @@ module Mongoid #:nodoc:
       # @param [ Document ] document The document to fail.
       def fail_validate!(document)
         raise Errors::Validations.new(document)
+      end
+
+      # Raise an error if a callback failed.
+      #
+      # @example Raise the callback error.
+      #   Person.fail_callback!(person, :create!)
+      #
+      # @param [ Document ] document The document to fail.
+      # @param [ Symbol ] method The method being called.
+      #
+      # @since 2.2.0
+      def fail_callback!(document, method)
+        raise Errors::Callback.new(document.class, method)
       end
     end
   end

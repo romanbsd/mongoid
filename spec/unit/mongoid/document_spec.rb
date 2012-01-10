@@ -2,7 +2,13 @@ require "spec_helper"
 
 describe Mongoid::Document do
 
-  let(:klass) { Person }
+  before(:all) do
+    Doctor
+  end
+
+  let(:klass) do
+    Person
+  end
 
   let(:person) do
     Person.new
@@ -239,6 +245,49 @@ describe Mongoid::Document do
     end
   end
 
+  describe "#cache_key" do
+
+    let(:person) do
+      Person.new
+    end
+
+    context "when the document is new" do
+
+      it "should have a new key name" do
+        person.cache_key.should eq("people/new")
+      end
+    end
+
+    context "when persisted" do
+
+      before do
+        person.save
+      end
+
+      context "with updated_at" do
+
+        let!(:updated_at) do
+          person.updated_at.utc.to_s(:number)
+        end
+
+        it "should have the id and updated_at key name" do
+          person.cache_key.should eq("people/#{person.id}-#{updated_at}")
+        end
+      end
+
+      context "without updated_at" do
+
+        before do
+          person.updated_at = nil
+        end
+
+        it "should have the id key name" do
+          person.cache_key.should eq("people/#{person.id}")
+        end
+      end
+    end
+  end
+
   describe "#hash" do
 
     let(:person) do
@@ -247,26 +296,6 @@ describe Mongoid::Document do
 
     it "returns the id hash" do
       person.hash.should == person.id.hash
-    end
-  end
-
-  describe "#identify" do
-
-    let!(:person) do
-      Person.new
-    end
-
-    let!(:identifier) do
-      stub
-    end
-
-    before do
-      Mongoid::Identity.expects(:new).with(person).returns(identifier)
-    end
-
-    it "creates a new identity" do
-      identifier.expects(:create)
-      person.identify
     end
   end
 
@@ -286,6 +315,21 @@ describe Mongoid::Document do
 
     it "sets the attributes" do
       person.title.should == "Sir"
+    end
+
+    context "when accessing a relation from an overridden setter" do
+
+      let(:doctor) do
+        Doctor.new(:specialty => "surgery")
+      end
+
+      it "allows access to the relation" do
+        doctor.users.first.should be_a(User)
+      end
+
+      it "properly allows super calls" do
+        doctor.specialty.should eq("surgery")
+      end
     end
 
     context "when initialize callbacks are defined" do
@@ -427,104 +471,6 @@ describe Mongoid::Document do
     end
   end
 
-  describe "#reload" do
-
-    let(:collection) do
-      stub
-    end
-
-    let(:person) do
-      Person.new(:title => "Sir")
-    end
-
-    let!(:name) do
-      person.build_name(:first_name => "James")
-    end
-
-    context "when the document has been persisted" do
-
-      let(:reloaded) do
-        person.reload
-      end
-
-      let!(:attributes) do
-        {
-          "title" => "Mrs",
-          "name" => { "first_name" => "Money" }
-        }
-      end
-
-      before do
-        person.expects(:collection).returns(collection)
-        collection.expects(:find_one).
-          with(:_id => person.id).returns(attributes)
-      end
-
-      it "reloads the attributes" do
-        reloaded.title.should == "Mrs"
-      end
-
-      it "reloads the relations" do
-        reloaded.name.first_name.should == "Money"
-      end
-    end
-
-    context "when the document is new" do
-
-      before do
-        person.expects(:collection).returns(collection)
-        collection.expects(:find_one).
-          with(:_id => person.id).returns(nil)
-      end
-
-      context "when raising a not found error" do
-
-        before do
-          Mongoid.raise_not_found_error = true
-        end
-
-        it "raises an error" do
-          expect {
-            person.reload
-          }.to raise_error(Mongoid::Errors::DocumentNotFound)
-        end
-      end
-
-      context "when not raising a not found error" do
-
-        before do
-          Mongoid.raise_not_found_error = false
-        end
-
-        after do
-          Mongoid.raise_not_found_error = true
-        end
-
-        it "sets the attributes to empty" do
-          person.reload.title.should be_nil
-        end
-      end
-    end
-
-    context "when a relation is set as nil" do
-
-      before do
-        person.instance_variable_set(:@name, nil)
-        person.expects(:collection).returns(collection)
-        collection.expects(:find_one).
-          with(:_id => person.id).returns({})
-      end
-
-      let(:reloaded) do
-        person.reload
-      end
-
-      it "removes the instance variable" do
-        reloaded.instance_variable_defined?(:@name).should be_false
-      end
-    end
-  end
-
   describe "#to_a" do
 
     let(:person) do
@@ -594,6 +540,19 @@ describe Mongoid::Document do
         person.to_key.should == [ person.id ]
       end
     end
+
+    context "when the document is destroyed" do
+
+      let(:person) do
+        Person.instantiate("_id" => BSON::ObjectId.new).tap do |peep|
+          peep.destroyed = true
+        end
+      end
+
+      it "returns the id in an array" do
+        person.to_key.should == [ person.id ]
+      end
+    end
   end
 
   describe "#to_param" do
@@ -649,6 +608,7 @@ describe Mongoid::Document do
     end
 
     context "when not frozen" do
+
       it "freezes attributes" do
         person.freeze.should == person
         lambda { person.title = "something" }.should raise_error
@@ -656,13 +616,44 @@ describe Mongoid::Document do
     end
 
     context "when frozen" do
+
       before do
         person.raw_attributes.freeze
       end
+
       it "keeps things frozen" do
         person.freeze
         lambda { person.title = "something" }.should raise_error
       end
+    end
+  end
+
+  describe ".logger" do
+
+    it "returns the mongoid logger" do
+      Person.logger.should eq(Mongoid.logger)
+    end
+  end
+
+  describe "#logger" do
+
+    let(:person) do
+      Person.new
+    end
+
+    it "returns the mongoid logger" do
+      person.send(:logger).should eq(Mongoid.logger)
+    end
+  end
+
+  context "after including the document module" do
+
+    let(:movie) do
+      Movie.new
+    end
+
+    it "resets to the global scope" do
+      movie.global_set.should be_a(::Set)
     end
   end
 end
